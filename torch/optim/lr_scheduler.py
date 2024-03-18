@@ -1,3 +1,4 @@
+import abc
 import types
 import math
 from typing import Sequence, Optional
@@ -33,13 +34,31 @@ def _check_verbose_deprecated_warning(verbose):
     return False
 
 
-class LRScheduler:
+class _SchedulerBase(abc.ABC):
+    """https://github.com/pytorch/pytorch/issues/67760"""
+
+    @abc.abstractmethod
+    def step(self, *args, **kwargs):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    @property
+    def optimizer(self) -> Optimizer:
+        raise NotImplementedError
+
+    @property
+    def last_lr(self) -> Sequence[float]:
+        return [group["lr"] for group in self.optimizer.param_groups]
+
+    def get_last_lr(self):
+        return self.last_lr
+
+
+class LRScheduler(_SchedulerBase):
 
     def __init__(self, optimizer, last_epoch=-1, verbose="deprecated"):
 
         # Attach optimizer
-        if not isinstance(optimizer, Optimizer):
-            raise TypeError(f'{type(optimizer).__name__} is not an Optimizer')
         self.optimizer = optimizer
 
         # Initialize epoch and base learning rates
@@ -86,6 +105,16 @@ class LRScheduler:
         self.verbose = _check_verbose_deprecated_warning(verbose)
 
         self._initial_step()
+
+    @property
+    def optimizer(self) -> Optimizer:
+        return self._optimizer
+
+    @optimizer.setter
+    def optimizer(self, optimizer: Optimizer):
+        if not isinstance(optimizer, Optimizer):
+            raise TypeError(f'{type(optimizer).__name__} is not an Optimizer')
+        self._optimizer = optimizer
 
     def _initial_step(self):
         """Initialize step counts and performs a step"""
@@ -165,8 +194,6 @@ class LRScheduler:
         for i, data in enumerate(zip(self.optimizer.param_groups, values)):
             param_group, lr = data
             param_group['lr'] = lr
-
-        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
 
 # Including _LRScheduler for backwards compatibility
