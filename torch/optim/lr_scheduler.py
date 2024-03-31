@@ -508,7 +508,7 @@ class MultiStepLR(Scheduler):
         ]
 
 
-class ConstantLR(LRScheduler):
+class ConstantLR(Scheduler):
     """Multiply the learning rate of each parameter group by a small constant factor until the
     number of epoch reaches a pre-defined milestone: total_iters.
     Notice that such multiplication of the small constant factor can
@@ -543,30 +543,40 @@ class ConstantLR(LRScheduler):
         >>>     scheduler.step()
     """
 
-    def __init__(self, optimizer, factor=1.0 / 3, total_iters=5, last_epoch=-1, verbose="deprecated"):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            factor: float = 1.0 / 3,
+            total_iters: int = 5,
+            **kwargs,
+    ):
         if factor > 1.0 or factor < 0:
             raise ValueError('Constant multiplicative factor expected to be between 0 and 1.')
 
         self.factor = factor
         self.total_iters = total_iters
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, **kwargs)
 
-    def get_lr(self):
+    @property
+    def targets(self) -> Sequence[str]:
+        return ["lr"]
+
+    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
-                          "please use `get_last_lr()`.", UserWarning)
+                          "please use `get_last_lr()`.")
 
-        if self.last_epoch == 0:
-            return [group['lr'] * self.factor for group in self.optimizer.param_groups]
+        target = self.targets[0]
+        if not step:
+            return [{target: param_group[target] * self.factor} for param_group in self.param_groups]
 
-        if self.last_epoch != self.total_iters:
-            return [group['lr'] for group in self.optimizer.param_groups]
+        if step != self.total_iters:
+            return [{target: param_group[target]} for param_group in self.param_groups]
 
-        return [group['lr'] * (1.0 / self.factor) for group in self.optimizer.param_groups]
-
-    def _get_closed_form_lr(self):
-        return [base_lr * (self.factor + (self.last_epoch >= self.total_iters) * (1 - self.factor))
-                for base_lr in self.base_lrs]
+        return [
+            {target: param_group[target] * (1.0 / self.factor)}
+            for param_group in self.param_groups
+        ]
 
 
 class LinearLR(LRScheduler):
