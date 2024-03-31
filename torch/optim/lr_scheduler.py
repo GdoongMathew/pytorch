@@ -446,7 +446,7 @@ class StepLR(Scheduler):
         ]
 
 
-class MultiStepLR(LRScheduler):
+class MultiStepLR(Scheduler):
     """Decays the learning rate of each parameter group by gamma once the
     number of epoch reaches one of the milestones. Notice that such decay can
     happen simultaneously with other changes to the learning rate from outside
@@ -478,25 +478,34 @@ class MultiStepLR(LRScheduler):
         >>>     scheduler.step()
     """
 
-    def __init__(self, optimizer, milestones, gamma=0.1, last_epoch=-1, verbose="deprecated"):
-        self.milestones = Counter(milestones)
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            milestones: Sequence[int],
+            gamma: float = 0.1,
+            **kwargs,
+    ):
+        self.milestones: Counter = Counter(sorted(milestones))
         self.gamma = gamma
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, **kwargs)
 
-    def get_lr(self):
+    @property
+    def targets(self) -> Sequence[str]:
+        return ['lr']
+
+    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
-                          "please use `get_last_lr()`.", UserWarning)
+                          "please use `get_last_lr()`.")
 
-        if self.last_epoch not in self.milestones:
-            return [group['lr'] for group in self.optimizer.param_groups]
-        return [group['lr'] * self.gamma ** self.milestones[self.last_epoch]
-                for group in self.optimizer.param_groups]
+        target = self.targets[0]
+        if step not in self.milestones:
+            return [{target: param_group[target]} for param_group in self.param_groups]
 
-    def _get_closed_form_lr(self):
-        milestones = sorted(self.milestones.elements())
-        return [base_lr * self.gamma ** bisect_right(milestones, self.last_epoch)
-                for base_lr in self.base_lrs]
+        return [
+            {target: param_group[target] * self.gamma ** self.milestones[step]}
+            for param_group in self.param_groups
+        ]
 
 
 class ConstantLR(LRScheduler):
