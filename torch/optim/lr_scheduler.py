@@ -386,7 +386,7 @@ class MultiplicativeLR(LambdaLR):
         return [targets["lr"] * lmbda(step) for lmbda, targets in zip(self.lr_lambdas, self.last_targets)]
 
 
-class StepLR(LRScheduler):
+class StepLR(Scheduler):
     """Decays the learning rate of each parameter group by gamma every
     step_size epochs. Notice that such decay can happen simultaneously with
     other changes to the learning rate from outside this scheduler. When
@@ -419,24 +419,31 @@ class StepLR(LRScheduler):
         >>>     scheduler.step()
     """
 
-    def __init__(self, optimizer, step_size, gamma=0.1, last_epoch=-1, verbose="deprecated"):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            step_size: int = 1,
+            gamma: float = 0.1,
+            **kwargs,
+    ):
         self.step_size = step_size
         self.gamma = gamma
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, **kwargs)
 
-    def get_lr(self):
+    @property
+    def targets(self) -> Sequence[str]:
+        return ['lr']
+
+    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
-                          "please use `get_last_lr()`.", UserWarning)
+                          "please use `get_last_lr()`.")
 
-        if (self.last_epoch == 0) or (self.last_epoch % self.step_size != 0):
-            return [group['lr'] for group in self.optimizer.param_groups]
-        return [group['lr'] * self.gamma
-                for group in self.optimizer.param_groups]
-
-    def _get_closed_form_lr(self):
-        return [base_lr * self.gamma ** (self.last_epoch // self.step_size)
-                for base_lr in self.base_lrs]
+        target = self.targets[0]
+        return [
+            {target: base_target[target] * self.gamma ** (step // self.step_size)}
+            for base_target in self.base_targets
+        ]
 
 
 class MultiStepLR(LRScheduler):
