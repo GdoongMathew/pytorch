@@ -1,44 +1,48 @@
 import abc
 import types
 import math
-from typing import Sequence, Optional
-from torch import inf
-from functools import wraps, partial
 import warnings
 import weakref
+import collections
 from collections import Counter
+from typing import Sequence, Optional, Dict, Any, Union, Literal
+from typing_extensions import deprecated
+from functools import wraps, partial
+
+from torch import inf
 from bisect import bisect_right
 
 from .optimizer import Optimizer
 
-__all__ = ['LambdaLR', 'MultiplicativeLR', 'StepLR', 'MultiStepLR', 'ConstantLR', 'LinearLR',
-           'ExponentialLR', 'SequentialLR', 'CosineAnnealingLR', 'ChainedScheduler', 'ReduceLROnPlateau',
-           'CyclicLR', 'CosineAnnealingWarmRestarts', 'OneCycleLR', 'PolynomialLR', 'LRScheduler']
-
-EPOCH_DEPRECATION_WARNING = (
-    "The epoch parameter in `scheduler.step()` was not necessary and is being "
-    "deprecated where possible. Please use `scheduler.step()` to step the "
-    "scheduler. During the deprecation, if epoch is different from None, the "
-    "closed form is used instead of the new chainable form, where available. "
-    "Please open an issue if you are unable to replicate your use case: "
-    "https://github.com/pytorch/pytorch/issues/new/choose."
-)
-
-
-def _check_verbose_deprecated_warning(verbose):
-    """Raises a warning when verbose is not the default value."""
-    if verbose != "deprecated":
-        warnings.warn("The verbose parameter is deprecated. Please use get_last_lr() "
-                      "to access the learning rate.", UserWarning)
-        return verbose
-    return False
+__all__ = [
+    'LambdaLR',
+    'MultiplicativeLR',
+    'StepLR',
+    'MultiStepLR',
+    'ConstantLR',
+    'LinearLR',
+    'ExponentialLR',
+    'SequentialLR',
+    'CosineAnnealingLR',
+    'ChainedScheduler',
+    'ReduceLROnPlateau',
+    'CyclicLR',
+    'CosineAnnealingWarmRestarts',
+    'OneCycleLR',
+    'PolynomialLR',
+    'Scheduler',
+]
 
 
 class _SchedulerBase(abc.ABC):
     """https://github.com/pytorch/pytorch/issues/67760"""
 
     @abc.abstractmethod
-    def step(self, *args, **kwargs):
+    def state_dict(self):
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def load_state_dict(self, state_dict):
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -46,32 +50,62 @@ class _SchedulerBase(abc.ABC):
     def optimizer(self) -> Optimizer:
         raise NotImplementedError
 
+    @abc.abstractmethod
+    def step(self, *, step, **kwargs):
+        raise NotImplementedError
+
     @property
-    def last_lr(self) -> Sequence[float]:
-        return [group["lr"] for group in self.optimizer.param_groups]
+    def states(self) -> Dict[str, Any]:
+        """The state of the scheduler, including `_step_counts`, or `metrics` in `ReduceLROnPlateau`."""
+        if not hasattr(self, "_states"):
+            self._states = {}
+        return self._states
 
-    def get_last_lr(self):
-        return self.last_lr
+
+class _enable_get_lr_call:
+
+    def __init__(self, o):
+        self.o = o
+
+    def __enter__(self):
+        self.o._get_lr_called_within_step = True
+        return self
+
+    def __exit__(self, type, value, traceback):
+        self.o._get_lr_called_within_step = False
 
 
-class LRScheduler(_SchedulerBase):
+class Scheduler(_SchedulerBase):
 
-    def __init__(self, optimizer, last_epoch=-1, verbose="deprecated"):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            param_groups: Sequence[Dict[str, Any]] = None,
+            last_step=-1,
+    ):
 
         # Attach optimizer
         self.optimizer = optimizer
+        self.last_step = last_step
+
+        param_groups = param_groups or optimizer.param_groups
+        if not isinstance(param_groups, collections.Sequence):
+            raise TypeError(f"param_groups should be a sequence of mappings, but got {type(param_groups)}.")
 
         # Initialize epoch and base learning rates
-        if last_epoch == -1:
-            for group in optimizer.param_groups:
-                group.setdefault('initial_lr', group['lr'])
-        else:
-            for i, group in enumerate(optimizer.param_groups):
-                if 'initial_lr' not in group:
-                    raise KeyError("param 'initial_lr' is not specified "
-                                   f"in param_groups[{i}] when resuming an optimizer")
-        self.base_lrs = [group['initial_lr'] for group in optimizer.param_groups]
-        self.last_epoch = last_epoch
+        self.base_targets = [{} for _ in range(len(param_groups))]
+        for gi, group in enumerate(param_groups):
+            for target in self.targets:
+                if f"initial_{target}" not in group:
+                    if self.last_step != -1:
+                        raise KeyError(
+                            f"param `initial_{target}` is not specified in param_groups[{gi}] "
+                            "when resuming an optimizer."
+                        )
+                    group.setdefault(f"initial_{target}", group[target])
+                    self.base_targets[gi][f"initial_{target}"] = group[target]
+
+        self.param_groups = param_groups
 
         # Following https://github.com/pytorch/pytorch/issues/20124
         # We would like to ensure that `lr_scheduler.step()` is called after
@@ -102,9 +136,39 @@ class LRScheduler(_SchedulerBase):
             return wrapper
 
         self.optimizer.step = with_counter(self.optimizer.step)
-        self.verbose = _check_verbose_deprecated_warning(verbose)
-
         self._initial_step()
+
+    @property
+    def targets(self) -> Sequence[str]:
+        """The targets that the scheduler can update."""
+        raise NotImplementedError("targets() must be implemented in derived classes")
+
+    @property
+    def last_targets(self):
+        """The targets at the last step for each parameter group."""
+        return [{key: param_group[key] for key in self.targets} for param_group in self.param_groups]
+
+    @property
+    def _step_count(self) -> int:
+        """The number of times `lr_scheduler.step()` has been called."""
+        if "_step_count" not in self.states:
+            self.states.setdefault("_step_count", 0)
+        return self.states["_step_count"]
+
+    @_step_count.setter
+    def _step_count(self, value: int):
+        self.states["_step_count"] = value
+
+    @property
+    def last_step(self):
+        """The value last time passed to `lr_scheduler.step().` as `step`."""
+        if "last_step" not in self.states:
+            self.states.setdefault("last_step", -1)
+        return self.states["last_step"]
+
+    @last_step.setter
+    def last_step(self, value: int):
+        self.states["last_step"] = value
 
     @property
     def optimizer(self) -> Optimizer:
@@ -113,14 +177,14 @@ class LRScheduler(_SchedulerBase):
     @optimizer.setter
     def optimizer(self, optimizer: Optimizer):
         if not isinstance(optimizer, Optimizer):
-            raise TypeError(f'{type(optimizer).__name__} is not an Optimizer')
+            raise TypeError(f'{type(optimizer).__name__} is not an `Optimizer`')
         self._optimizer = optimizer
 
     def _initial_step(self):
         """Initialize step counts and performs a step"""
         self.optimizer._step_count = 0
         self._step_count = 0
-        self.step()
+        self.step(step=self._step_count)
 
     def state_dict(self):
         """Returns the state of the scheduler as a :class:`dict`.
@@ -128,7 +192,7 @@ class LRScheduler(_SchedulerBase):
         It contains an entry for every variable in self.__dict__ which
         is not the optimizer.
         """
-        return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
+        return {key: value for key, value in self.__dict__.items() if key != '_optimizer'}
 
     def load_state_dict(self, state_dict):
         """Loads the schedulers state.
@@ -139,27 +203,11 @@ class LRScheduler(_SchedulerBase):
         """
         self.__dict__.update(state_dict)
 
-    def get_last_lr(self):
-        """ Return last computed learning rate by current scheduler.
-        """
-        return self._last_lr
-
-    def get_lr(self):
+    def get_targets(self, **kwargs) -> Sequence[Dict[str, Any]]:
         # Compute learning rate using chainable form of the scheduler
         raise NotImplementedError
 
-    def print_lr(self, is_verbose, group, lr, epoch=None):
-        """Display the current learning rate.
-        """
-        if is_verbose:
-            if epoch is None:
-                print(f'Adjusting learning rate of group {group} to {lr:.4e}.')
-            else:
-                epoch_str = ("%.2f" if isinstance(epoch, float) else
-                             "%.5d") % epoch
-                print(f'Epoch {epoch_str}: adjusting learning rate of group {group} to {lr:.4e}.')
-
-    def step(self, epoch=None):
+    def step(self, *, step=None, **kwargs):
         # Raise a warning if old pattern is detected
         # https://github.com/pytorch/pytorch/issues/20124
         if self._step_count == 1:
@@ -179,40 +227,30 @@ class LRScheduler(_SchedulerBase):
                               "https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate", UserWarning)
         self._step_count += 1
 
-        with _enable_get_lr_call(self):
-            if epoch is None:
-                self.last_epoch += 1
-                values = self.get_lr()
-            else:
-                warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
-                self.last_epoch = epoch
-                if hasattr(self, "_get_closed_form_lr"):
-                    values = self._get_closed_form_lr()
-                else:
-                    values = self.get_lr()
+        if step is None:
+            # This is for supporting the old way of calling step() without passing step
+            step = self.last_step + 1
 
-        for i, data in enumerate(zip(self.optimizer.param_groups, values)):
-            param_group, lr = data
-            param_group['lr'] = lr
+        self.last_step = step
+        self.states.update(kwargs)
+
+        with _enable_get_lr_call(self):
+            targets = self.get_targets(**self.states)
+            if isinstance(targets, collections.Sequence) and len(self.targets) == 1:
+                targets = [{self.targets[0]: target} for target in targets]
+
+        assert len(targets) == len(self.param_groups), (
+            f"expected {len(self.param_groups)} targets, but got {len(targets)}"
+        )
+
+        for param_group, target in zip(self.param_groups, targets):
+            param_group.update(target)
 
 
 # Including _LRScheduler for backwards compatibility
 # Subclass instead of assign because we want __name__ of _LRScheduler to be _LRScheduler (assigning would make it LRScheduler).
-class _LRScheduler(LRScheduler):
+class _LRScheduler(Scheduler):
     pass
-
-
-class _enable_get_lr_call:
-
-    def __init__(self, o):
-        self.o = o
-
-    def __enter__(self):
-        self.o._get_lr_called_within_step = True
-        return self
-
-    def __exit__(self, type, value, traceback):
-        self.o._get_lr_called_within_step = False
 
 
 class LambdaLR(LRScheduler):
@@ -696,25 +734,18 @@ class SequentialLR(LRScheduler):
     """
 
     def __init__(self, optimizer, schedulers, milestones, last_epoch=-1, verbose="deprecated"):
-        if len(schedulers) < 1:
-            raise ValueError(f"{self.__class__.__name__} expects at least one scheduler, but got no scheduler.")
-
-        for scheduler_idx, scheduler in enumerate(schedulers):
-            if not hasattr(scheduler, 'optimizer'):
-                raise TypeError(
-                    f"{self.__class__.__name__} at index {scheduler_idx} should have `optimizer` as its attribute."
-                )
-            if isinstance(scheduler, ReduceLROnPlateau):
+        for scheduler_idx in range(len(schedulers)):
+            if schedulers[scheduler_idx].optimizer != optimizer:
                 raise ValueError(
-                    f"{self.__class__.__name__} does not support `ReduceLROnPlateau` scheduler, "
-                    f"but got one at index {scheduler_idx} in the given schedulers sequence."
-                )
-            if scheduler.optimizer != optimizer:
-                raise ValueError(
-                    f"{self.__class__.__name__} expects all schedulers to belong to the same optimizer, but "
+                    "Sequential Schedulers expects all schedulers to belong to the same optimizer, but "
                     f"got schedulers at index {scheduler_idx} to be different than the optimizer passed in."
                 )
 
+            if (schedulers[scheduler_idx].optimizer != schedulers[0].optimizer):
+                raise ValueError(
+                    "Sequential Schedulers expects all schedulers to belong to the same optimizer, but "
+                    f"got schedulers at index {0} and {scheduler_idx} to be different."
+                )
         if (len(milestones) != len(schedulers) - 1):
             raise ValueError(
                 "Sequential Schedulers expects number of schedulers provided to be one more "
@@ -915,13 +946,12 @@ class CosineAnnealingLR(LRScheduler):
 
 
 class ChainedScheduler(LRScheduler):
-    """Chains list of learning rate schedulers. It takes a sequence of chainable learning
+    """Chains list of learning rate schedulers. It takes a list of chainable learning
     rate schedulers and performs consecutive step() functions belonging to them by just
     one call.
 
     Args:
-        schedulers (sequence): sequence of chained schedulers.
-        optimizer (Optimizer, optional): Wrapped optimizer. Default: None.
+        schedulers (list): List of chained schedulers.
 
     Example:
         >>> # xdoctest: +SKIP
@@ -933,35 +963,22 @@ class ChainedScheduler(LRScheduler):
         >>> # lr = 0.59049  if epoch >= 4
         >>> scheduler1 = ConstantLR(optimizer, factor=0.1, total_iters=2)
         >>> scheduler2 = ExponentialLR(optimizer, gamma=0.9)
-        >>> scheduler = ChainedScheduler([scheduler1, scheduler2], optimizer=optimizer)
+        >>> scheduler = ChainedScheduler([scheduler1, scheduler2])
         >>> for epoch in range(100):
         >>>     train(...)
         >>>     validate(...)
         >>>     scheduler.step()
     """
 
-    def __init__(self, schedulers: Sequence[LRScheduler], optimizer: Optional[Optimizer] = None):
-        if len(schedulers) < 1:
-            raise ValueError(
-                f"{self.__class__.__name__} expects at least one scheduler to be chained, but got no scheduler."
-            )
-
-        optimizer = optimizer or schedulers[0].optimizer
-        for sch_idx, scheduler in enumerate(schedulers):
-            if not isinstance(scheduler, LRScheduler):
-                raise TypeError(
-                    f"{self.__class__.__name__} expects all schedulers to be of type LRScheduler, "
-                    f"but got {type(scheduler)}"
-                )
-
-            if optimizer != scheduler.optimizer:
+    def __init__(self, schedulers):
+        for scheduler_idx in range(1, len(schedulers)):
+            if (schedulers[scheduler_idx].optimizer != schedulers[0].optimizer):
                 raise ValueError(
-                    f"{self.__class__.__name__} expects all schedulers to belong to the same optimizer, but "
-                    f"got scheduler {scheduler.__class__.__name__} at index {sch_idx} has {scheduler.optimizer}, "
-                    f"which is different from {optimizer.__class__.__name__}."
+                    "ChainedScheduler expects all schedulers to belong to the same optimizer, but "
+                    f"got schedulers at index {0} and {scheduler_idx} to be different"
                 )
-        self._schedulers = schedulers
-        self.optimizer = optimizer
+        self._schedulers = list(schedulers)
+        self.optimizer = schedulers[0].optimizer
         self._last_lr = [group['lr'] for group in self._schedulers[-1].optimizer.param_groups]
 
     def step(self):
