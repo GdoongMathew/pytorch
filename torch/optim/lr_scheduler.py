@@ -660,7 +660,8 @@ class LinearLR(Scheduler):
         ]
 
 
-class ExponentialLR(LRScheduler):
+@deprecated("Use `StepLR(step_size=1)` instead.")
+class ExponentialLR(Scheduler):
     """Decays the learning rate of each parameter group by gamma every epoch.
     When last_epoch=-1, sets initial lr as lr.
 
@@ -676,23 +677,26 @@ class ExponentialLR(LRScheduler):
                 learning rate.
     """
 
-    def __init__(self, optimizer, gamma, last_epoch=-1, verbose="deprecated"):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            gamma: float,
+            **kwargs,
+    ):
         self.gamma = gamma
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, **kwargs)
 
-    def get_lr(self):
+    @property
+    def targets(self) -> Sequence[str]:
+        return ["lr"]
+
+    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
-                          "please use `get_last_lr()`.", UserWarning)
+                          "please use `get_last_lr()`.")
 
-        if self.last_epoch == 0:
-            return [group['lr'] for group in self.optimizer.param_groups]
-        return [group['lr'] * self.gamma
-                for group in self.optimizer.param_groups]
-
-    def _get_closed_form_lr(self):
-        return [base_lr * self.gamma ** self.last_epoch
-                for base_lr in self.base_lrs]
+        target = self.targets[0]
+        return [{target: param_group[target] * self.gamma} for param_group in self.param_groups]
 
 
 class SequentialLR(LRScheduler):
