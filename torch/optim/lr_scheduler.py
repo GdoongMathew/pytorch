@@ -253,7 +253,7 @@ class _LRScheduler(Scheduler):
     pass
 
 
-class LambdaLR(LRScheduler):
+class LambdaLR(Scheduler):
     """Sets the learning rate of each parameter group to the initial lr
     times a given function. When last_epoch=-1, sets initial lr as lr.
 
@@ -282,16 +282,24 @@ class LambdaLR(LRScheduler):
         >>>     scheduler.step()
     """
 
-    def __init__(self, optimizer, lr_lambda, last_epoch=-1, verbose="deprecated"):
-        self.optimizer = optimizer
-
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            lr_lambda, param_groups: Sequence[Dict[str, Any]] = None,
+            **kwargs,
+    ):
+        param_groups = param_groups or optimizer.param_groups
         if not isinstance(lr_lambda, list) and not isinstance(lr_lambda, tuple):
             self.lr_lambdas = [lr_lambda] * len(optimizer.param_groups)
         else:
             if len(lr_lambda) != len(optimizer.param_groups):
                 raise ValueError(f"Expected {len(optimizer.param_groups)} lr_lambdas, but got {len(lr_lambda)}")
             self.lr_lambdas = list(lr_lambda)
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, param_groups=param_groups, **kwargs)
+
+    @property
+    def targets(self) -> Sequence[str]:
+        return ['lr']
 
     def state_dict(self):
         """Returns the state of the scheduler as a :class:`dict`.
@@ -304,7 +312,7 @@ class LambdaLR(LRScheduler):
         When saving or loading the scheduler, please make sure to also save or load the state of the optimizer.
         """
 
-        state_dict = {key: value for key, value in self.__dict__.items() if key not in ('optimizer', 'lr_lambdas')}
+        state_dict = {key: value for key, value in self.__dict__.items() if key not in ('_optimizer', 'lr_lambdas')}
         state_dict['lr_lambdas'] = [None] * len(self.lr_lambdas)
 
         for idx, fn in enumerate(self.lr_lambdas):
@@ -333,13 +341,12 @@ class LambdaLR(LRScheduler):
             if fn is not None:
                 self.lr_lambdas[idx].__dict__.update(fn)
 
-    def get_lr(self):
+    def get_targets(self, *, last_step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        return [base_lr * lmbda(self.last_epoch)
-                for lmbda, base_lr in zip(self.lr_lambdas, self.base_lrs)]
+        return [base_lr["lr"] * lmbda(last_step) for lmbda, base_lr in zip(self.lr_lambdas, self.base_targets)]
 
 
 class MultiplicativeLR(LRScheduler):
