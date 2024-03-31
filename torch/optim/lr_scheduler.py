@@ -341,12 +341,12 @@ class LambdaLR(Scheduler):
             if fn is not None:
                 self.lr_lambdas[idx].__dict__.update(fn)
 
-    def get_targets(self, *, last_step, **kwargs):
+    def get_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        return [base_lr["lr"] * lmbda(last_step) for lmbda, base_lr in zip(self.lr_lambdas, self.base_targets)]
+        return [base_lr["lr"] * lmbda(step) for lmbda, base_lr in zip(self.lr_lambdas, self.base_targets)]
 
 
 class MultiplicativeLR(LambdaLR):
