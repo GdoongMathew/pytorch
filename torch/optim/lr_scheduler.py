@@ -82,11 +82,14 @@ class Scheduler(_SchedulerBase):
             optimizer: Optimizer,
             param_groups: Sequence[Dict[str, Any]] = None,
             last_step=-1,
+            total_iters: int = -1,
+
     ):
 
         # Attach optimizer
         self.optimizer = optimizer
         self.last_step = last_step
+        self.total_iters = total_iters
 
         param_groups = param_groups or optimizer.param_groups
         if not isinstance(param_groups, collections.Sequence):
@@ -203,7 +206,7 @@ class Scheduler(_SchedulerBase):
         """
         self.__dict__.update(state_dict)
 
-    def get_targets(self, **kwargs) -> Sequence[Dict[str, Any]]:
+    def get_targets(self, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         # Compute learning rate using chainable form of the scheduler
         raise NotImplementedError
 
@@ -231,13 +234,21 @@ class Scheduler(_SchedulerBase):
             # This is for supporting the old way of calling step() without passing step
             step = self.last_step + 1
 
+        if self.total_iters != -1 and step >= self.total_iters:
+            # If total_iter is set, the scheduler will stop updating learning rate after total_iter steps.
+            return
+
         self.last_step = step
         self.states.update(kwargs)
 
         with _enable_get_lr_call(self):
             targets = self.get_targets(**self.states)
-            if isinstance(targets, collections.Sequence) and len(self.targets) == 1:
-                targets = [{self.targets[0]: target} for target in targets]
+
+            if targets is None:
+                return
+
+            if any(map(lambda x: not isinstance(x, dict), targets)):
+                raise TypeError("get_targets should return a sequence of dicts")
 
         assert len(targets) == len(self.param_groups), (
             f"expected {len(self.param_groups)} targets, but got {len(targets)}"
@@ -341,12 +352,15 @@ class LambdaLR(Scheduler):
             if fn is not None:
                 self.lr_lambdas[idx].__dict__.update(fn)
 
-    def get_targets(self, *, step, **kwargs):
+    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        return [base_lr["lr"] * lmbda(step) for lmbda, base_lr in zip(self.lr_lambdas, self.base_targets)]
+        return [
+            {self.targets[0]: base_target[f"initial_{self.targets[0]}"] * lmbda(step)}
+            for lmbda, base_target in zip(self.lr_lambdas, self.base_targets)
+        ]
 
 
 class MultiplicativeLR(LambdaLR):
@@ -383,7 +397,12 @@ class MultiplicativeLR(LambdaLR):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
-        return [targets["lr"] * lmbda(step) for lmbda, targets in zip(self.lr_lambdas, self.last_targets)]
+        if not step:
+            return None
+        return [
+            {self.targets[0]: param["lr"] * lmbda(step)}
+            for lmbda, param in zip(self.lr_lambdas, self.param_groups)
+        ]
 
 
 class StepLR(Scheduler):
@@ -493,14 +512,14 @@ class MultiStepLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
+    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
         target = self.targets[0]
         if step not in self.milestones:
-            return [{target: param_group[target]} for param_group in self.param_groups]
+            return None
 
         return [
             {target: param_group[target] * self.gamma ** self.milestones[step]}
@@ -554,14 +573,13 @@ class ConstantLR(Scheduler):
             raise ValueError('Constant multiplicative factor expected to be between 0 and 1.')
 
         self.factor = factor
-        self.total_iters = total_iters
-        super().__init__(optimizer, **kwargs)
+        super().__init__(optimizer, total_iters=total_iters, **kwargs)
 
     @property
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
+    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -571,7 +589,7 @@ class ConstantLR(Scheduler):
             return [{target: param_group[target] * self.factor} for param_group in self.param_groups]
 
         if step != self.total_iters:
-            return [{target: param_group[target]} for param_group in self.param_groups]
+            return None
 
         return [
             {target: param_group[target] * (1.0 / self.factor)}
@@ -633,8 +651,7 @@ class LinearLR(Scheduler):
 
         self.start_factor = start_factor
         self.end_factor = end_factor
-        self.total_iters = total_iters
-        super().__init__(optimizer, **kwargs)
+        super().__init__(optimizer, total_iters=total_iters, **kwargs)
 
     @property
     def targets(self) -> Sequence[str]:
@@ -1701,6 +1718,7 @@ class OneCycleLR(LRScheduler):
     .. _Super-Convergence\: Very Fast Training of Neural Networks Using Large Learning Rates:
         https://arxiv.org/abs/1708.07120
     """
+
     def __init__(self,
                  optimizer,
                  max_lr,
@@ -1858,7 +1876,8 @@ class OneCycleLR(LRScheduler):
                     pct = (step_num - start_step) / (end_step - start_step)
                     computed_lr = self.anneal_func(group[phase['start_lr']], group[phase['end_lr']], pct)
                     if self.cycle_momentum:
-                        computed_momentum = self.anneal_func(group[phase['start_momentum']], group[phase['end_momentum']], pct)
+                        computed_momentum = self.anneal_func(group[phase['start_momentum']],
+                                                             group[phase['end_momentum']], pct)
                     break
                 start_step = phase['end_step']
 
@@ -1870,3 +1889,47 @@ class OneCycleLR(LRScheduler):
                     group['momentum'] = computed_momentum
 
         return lrs
+
+
+class ComposeScheduler(_SchedulerBase, abc.ABC):
+    def __init__(self, schedulers: Sequence[_SchedulerBase]):
+        if len(schedulers) < 1:
+            raise ValueError(f"{self.__class__.__name__} expects at least one scheduler, but got no scheduler.")
+
+        base_optimizer = schedulers[0].optimizer
+
+        for scheduler_idx, scheduler in enumerate(schedulers):
+            if not isinstance(scheduler, _SchedulerBase):
+                raise TypeError(
+                    f"{self.__class__.__name__} expects all schedulers to be of type _SchedulerBase, but got "
+                    f"an object of type {type(scheduler)} at index {scheduler_idx}"
+                )
+            if scheduler.optimizer != base_optimizer:
+                raise ValueError(
+                    f"{self.__class__.__name__} expects all schedulers to belong to the same optimizer, but "
+                    f"got schedulers at index {scheduler_idx} to be different than the optimizer passed in."
+                )
+        self.schedulers = schedulers
+
+    @property
+    def optimizer(self) -> Optimizer:
+        return self.schedulers[0].optimizer
+
+    def state_dict(self):
+        state_dict = {key: value if key != "schedulers" else [scheduler.state_dict() for scheduler in self.schedulers]
+                      for key, value in self.__dict__.items()}
+        return state_dict
+
+    def load_state_dict(self, state_dict):
+        schedulers_state_dict = state_dict.pop('schedulers')
+        self.__dict__.update(state_dict)
+
+        for idx, scheduler_state_dict in enumerate(schedulers_state_dict):
+            self.schedulers[idx].load_state_dict(scheduler_state_dict)
+
+    @property
+    def last_targets(self) -> Sequence[Dict[str, Any]]:
+        targets = self.schedulers[0].last_targets
+        for scheduler in self.schedulers[1:]:
+            targets += scheduler.last_targets
+        return targets
