@@ -830,13 +830,13 @@ class SequentialLR(LRScheduler):
             self._schedulers[idx].load_state_dict(s)
 
 
-class PolynomialLR(LRScheduler):
+class PolynomialLR(Scheduler):
     """Decays the learning rate of each parameter group using a polynomial function
     in the given total_iters. When last_epoch=-1, sets initial lr as lr.
 
     Args:
         optimizer (Optimizer): Wrapped optimizer.
-        total_iters (int): The number of steps that the scheduler decays the learning rate. Default: 5.
+        total_iter (int): The number of steps that the scheduler decays the learning rate. Default: 5.
         power (float): The power of the polynomial. Default: 1.0.
         verbose (bool): If ``True``, prints a message to stdout for
             each update. Default: ``False``.
@@ -859,32 +859,37 @@ class PolynomialLR(LRScheduler):
         >>>     validate(...)
         >>>     scheduler.step()
     """
-    def __init__(self, optimizer, total_iters=5, power=1.0, last_epoch=-1, verbose="deprecated"):
-        self.total_iters = total_iters
-        self.power = power
-        super().__init__(optimizer, last_epoch, verbose)
 
-    def get_lr(self):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            power: float = 1.0,
+            total_iters: int = 5,
+            **kwargs,
+    ):
+        super().__init__(optimizer, total_iters=total_iters, **kwargs)
+        self.power = power
+        if self.total_iters < 1:
+            raise ValueError(f"total_iters should be greater than or equal to 1. Got {self.total_iters}")
+
+    @property
+    def targets(self) -> Sequence[str]:
+        return ["lr"]
+
+    def get_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        if self.last_epoch == 0 or self.last_epoch > self.total_iters:
-            return [group["lr"] for group in self.optimizer.param_groups]
+        if not step:
+            return None
 
-        decay_factor = ((1.0 - self.last_epoch / self.total_iters) / (1.0 - (self.last_epoch - 1) / self.total_iters)) ** self.power
-        return [group["lr"] * decay_factor for group in self.optimizer.param_groups]
-
-    def _get_closed_form_lr(self):
-        return [
-            (
-                base_lr * (1.0 - min(self.total_iters, self.last_epoch) / self.total_iters) ** self.power
-            )
-            for base_lr in self.base_lrs
-        ]
+        decay_factor = ((1.0 - step / self.total_iters) / (
+                1.0 - (step - 1) / self.total_iters)) ** self.power
+        return [{self.targets[0]: group[self.targets[0]] * decay_factor} for group in self.param_groups]
 
 
-class CosineAnnealingLR(LRScheduler):
+class CosineAnnealingLR(Scheduler):
     r"""Set the learning rate of each parameter group using a cosine annealing
     schedule, where :math:`\eta_{max}` is set to the initial lr and
     :math:`T_{cur}` is the number of epochs since the last restart in SGDR:
@@ -928,37 +933,49 @@ class CosineAnnealingLR(LRScheduler):
         https://arxiv.org/abs/1608.03983
     """
 
-    def __init__(self, optimizer, T_max, eta_min=0, last_epoch=-1, verbose="deprecated"):
-        self.T_max = T_max
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            total_iters: int,
+            eta_min=0,
+            **kwargs,
+    ):
         self.eta_min = eta_min
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, total_iters=total_iters, **kwargs)
 
-    def get_lr(self):
+    @property
+    def targets(self) -> Sequence[str]:
+        return ["lr"]
+
+    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        if self.last_epoch == 0:
-            return [group['lr'] for group in self.optimizer.param_groups]
-        elif self._step_count == 1 and self.last_epoch > 0:
-            return [self.eta_min + (base_lr - self.eta_min) *
-                    (1 + math.cos((self.last_epoch) * math.pi / self.T_max)) / 2
-                    for base_lr, group in
-                    zip(self.base_lrs, self.optimizer.param_groups)]
-        elif (self.last_epoch - 1 - self.T_max) % (2 * self.T_max) == 0:
-            return [group['lr'] + (base_lr - self.eta_min) *
-                    (1 - math.cos(math.pi / self.T_max)) / 2
-                    for base_lr, group in
-                    zip(self.base_lrs, self.optimizer.param_groups)]
-        return [(1 + math.cos(math.pi * self.last_epoch / self.T_max)) /
-                (1 + math.cos(math.pi * (self.last_epoch - 1) / self.T_max)) *
-                (group['lr'] - self.eta_min) + self.eta_min
-                for group in self.optimizer.param_groups]
+        target = self.targets[0]
 
-    def _get_closed_form_lr(self):
-        return [self.eta_min + (base_lr - self.eta_min) *
-                (1 + math.cos(math.pi * self.last_epoch / self.T_max)) / 2
-                for base_lr in self.base_lrs]
+        if not step:
+            return
+        elif self._step_count == 1 and step > 0:
+            return [
+                {target: self.eta_min + (base_target[target] - self.eta_min) *
+                         (1 + math.cos(step * math.pi / self.total_iters)) / 2}
+                for base_target, group in
+                zip(self.base_targets, self.param_groups)
+            ]
+        elif (step - 1 - self.total_iters) % (2 * self.total_iters) == 0:
+            return [
+                {target: group['lr'] + (base_target[target] - self.eta_min) *
+                         (1 - math.cos(math.pi / self.total_iters)) / 2}
+                for base_target, group in
+                zip(self.base_targets, self.param_groups)
+            ]
+        return [
+            {target: (1 + math.cos(math.pi * step / self.total_iters)) /
+                     (1 + math.cos(math.pi * (step - 1) / self.total_iters)) *
+                     (group['lr'] - self.eta_min) + self.eta_min}
+            for group in self.param_groups
+        ]
 
 
 class ChainedScheduler(LRScheduler):
@@ -1366,7 +1383,8 @@ class CyclicLR(LRScheduler):
             self.base_momentums = self._format_param('base_momentum', optimizer, base_momentum)
             self.max_momentums = self._format_param('max_momentum', optimizer, max_momentum)
             if last_epoch == -1:
-                for m_momentum, b_momentum, group in zip(self.max_momentums, self.base_momentums, optimizer.param_groups):
+                for m_momentum, b_momentum, group in zip(self.max_momentums, self.base_momentums,
+                                                         optimizer.param_groups):
                     if self.use_beta1:
                         group['betas'] = (m_momentum, *group['betas'][1:])
                     else:
