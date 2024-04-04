@@ -5,7 +5,7 @@ import warnings
 import weakref
 import collections
 from collections import Counter
-from typing import Sequence, Optional, Dict, Any, Union, Literal
+from typing import Sequence, Optional, Dict, Any, Union, Literal, Callable
 from typing_extensions import deprecated
 from functools import wraps, partial
 
@@ -1230,7 +1230,7 @@ class ReduceLROnPlateau(LRScheduler):
         self._init_is_better(mode=self.mode, threshold=self.threshold, threshold_mode=self.threshold_mode)
 
 
-class CyclicLR(LRScheduler):
+class CyclicLR(Scheduler):
     r"""Sets the learning rate of each parameter group according to
     cyclical learning rate policy (CLR). The policy cycles the learning
     rate between two boundaries with a constant frequency, as detailed in
@@ -1329,62 +1329,65 @@ class CyclicLR(LRScheduler):
     .. _bckenstler/CLR: https://github.com/bckenstler/CLR
     """
 
-    def __init__(self,
-                 optimizer,
-                 base_lr,
-                 max_lr,
-                 step_size_up=2000,
-                 step_size_down=None,
-                 mode='triangular',
-                 gamma=1.,
-                 scale_fn=None,
-                 scale_mode='cycle',
-                 cycle_momentum=True,
-                 base_momentum=0.8,
-                 max_momentum=0.9,
-                 last_epoch=-1,
-                 verbose="deprecated"):
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            max_lr: Union[float, Sequence[float]],
+            base_lr: Optional[Union[float, Sequence[float]]] = None,
+            param_groups: Optional[Sequence[Dict[str, Any]]] = None,
+            step_size_up: int = 2000,
+            step_size_down: Optional[int] = None,
+            mode: Literal["triangular", "triangular2", "exp_range"] = "triangular",
+            gamma: float = 1.,
+            scale_fn: Optional[Callable] = None,
+            scale_mode: Literal["cycle", "iterations"] = "cycle",
+            cycle_momentum: bool = True,
+            base_momentum: Optional[Union[float, Sequence[float]]] = 0.8,
+            max_momentum: Optional[Union[float, Sequence[float]]] = 0.9,
+            last_step: int = -1,
+    ):
+        param_groups = param_groups or optimizer.param_groups
 
-        # Attach optimizer
-        if not isinstance(optimizer, Optimizer):
-            raise TypeError(f'{type(optimizer).__name__} is not an Optimizer')
-        self.optimizer = optimizer
+        self.states["max_lr"] = self._format_param('max_lr', param_groups, max_lr)
 
-        base_lrs = self._format_param('base_lr', optimizer, base_lr)
-        if last_epoch == -1:
-            for lr, group in zip(base_lrs, optimizer.param_groups):
-                group['lr'] = lr
+        if not base_lr:
+            base_lr = [group['lr'] for group in param_groups]
+        else:
+            base_lr = self._format_param("base_lr", param_groups, base_lr)
+            if last_step == -1:
+                for lr, group in zip(base_lr, param_groups):
+                    group['lr'] = lr
 
-        self.max_lrs = self._format_param('max_lr', optimizer, max_lr)
+        self.states["base_lr"] = base_lr
 
-        step_size_up = float(step_size_up)
-        step_size_down = float(step_size_down) if step_size_down is not None else step_size_up
-        self.total_size = step_size_up + step_size_down
-        self.step_ratio = step_size_up / self.total_size
+        step_size_down = step_size_down or step_size_up
 
-        if mode not in ['triangular', 'triangular2', 'exp_range'] \
-                and scale_fn is None:
-            raise ValueError('mode is invalid and scale_fn is None')
+        total_iters = step_size_up + step_size_down
+        self.step_ratio = step_size_up / total_iters
 
         self.mode = mode
         self.gamma = gamma
+        self.cycle_momentum = cycle_momentum
 
         self._scale_fn_ref = None
         self._scale_fn_custom = scale_fn
         self.scale_mode = scale_mode
         self._init_scale_fn()
 
-        self.cycle_momentum = cycle_momentum
-        if cycle_momentum:
+        if self.cycle_momentum:
             if 'momentum' not in optimizer.defaults and 'betas' not in optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
 
             self.use_beta1 = 'betas' in self.optimizer.defaults
-            self.base_momentums = self._format_param('base_momentum', optimizer, base_momentum)
-            self.max_momentums = self._format_param('max_momentum', optimizer, max_momentum)
-            if last_epoch == -1:
-                for m_momentum, b_momentum, group in zip(self.max_momentums, self.base_momentums,
-                                                         optimizer.param_groups):
+
+            self.states["base_momentum"] = self._format_param('base_momentum', param_groups, base_momentum)
+            self.states["max_momentum"] = self._format_param('max_momentum', param_groups, max_momentum)
+            if last_step == -1:
+                for m_momentum, b_momentum, group in zip(
+                        self.states["max_momentum"],
+                        self.states["base_momentum"],
+                        param_groups,
+                ):
                     if self.use_beta1:
                         group['betas'] = (m_momentum, *group['betas'][1:])
                     else:
@@ -1392,8 +1395,19 @@ class CyclicLR(LRScheduler):
                     group['max_momentum'] = m_momentum
                     group['base_momentum'] = b_momentum
 
-        super().__init__(optimizer, last_epoch, verbose)
-        self.base_lrs = base_lrs
+        super().__init__(
+            optimizer=optimizer,
+            param_groups=param_groups,
+            total_iters=total_iters,
+            last_step=last_step,
+        )
+
+    @property
+    def targets(self) -> Sequence[str]:
+        targets = ["lr"]
+        if self.cycle_momentum:
+            targets += ["momentum"] if self.use_beta1 else ["betas"]
+        return targets
 
     def _init_scale_fn(self):
         if self._scale_fn_custom is not None:
@@ -1407,21 +1421,24 @@ class CyclicLR(LRScheduler):
         elif self.mode == 'exp_range':
             self._scale_fn_ref = partial(self._exp_range_scale_fn, self.gamma)
             self.scale_mode = 'iterations'
-
-    def _format_param(self, name, optimizer, param):
-        """Return correctly formatted lr/momentum for each param group."""
-        if isinstance(param, (list, tuple)):
-            if len(param) != len(optimizer.param_groups):
-                raise ValueError(f"expected {len(optimizer.param_groups)} values for {name}, got {len(param)}")
-            return param
         else:
-            return [param] * len(optimizer.param_groups)
+            raise ValueError(f'mode {self.mode} is invalid and scale_fn is None')
+
+    @staticmethod
+    def _format_param(name: str, param_groups: Sequence[Dict[str, Any]], param: Union[float, Sequence[float]]):
+        """Return correctly formatted lr/momentum for each param group."""
+        if isinstance(param, (float, int)):
+            param = [param] * len(param_groups)
+
+        elif isinstance(param, (list, tuple)) and len(param) != len(param_groups):
+            raise ValueError(f"expected {len(param_groups)} values for {name}, got {len(param)}")
+
+        return param
 
     def scale_fn(self, x):
         if self._scale_fn_custom is not None:
             return self._scale_fn_custom(x)
-        else:
-            return self._scale_fn_ref(x)  # static method
+        return self._scale_fn_ref(x)  # static method
 
     @staticmethod
     def _triangular_scale_fn(x):
@@ -1435,7 +1452,8 @@ class CyclicLR(LRScheduler):
     def _exp_range_scale_fn(gamma, x):
         return gamma ** x
 
-    def get_lr(self):
+    # def get_lr(self):
+    def get_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         """Calculates the learning rate at batch index. This function treats
         `self.last_epoch` as the last batch index.
 
@@ -1447,38 +1465,35 @@ class CyclicLR(LRScheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        cycle = math.floor(1 + self.last_epoch / self.total_size)
-        x = 1. + self.last_epoch / self.total_size - cycle
+        cycle = math.floor(1 + step / self.total_iters)
+        x = 1. + step / self.total_iters - cycle
         if x <= self.step_ratio:
             scale_factor = x / self.step_ratio
         else:
             scale_factor = (x - 1) / (self.step_ratio - 1)
 
-        lrs = []
-        for base_lr, max_lr in zip(self.base_lrs, self.max_lrs):
-            base_height = (max_lr - base_lr) * scale_factor
-            if self.scale_mode == 'cycle':
-                lr = base_lr + base_height * self.scale_fn(cycle)
-            else:
-                lr = base_lr + base_height * self.scale_fn(self.last_epoch)
-            lrs.append(lr)
+        rets = []
+        for pg_i, param_group in enumerate(self.param_groups):
+            base_lr = self.states["base_lr"][pg_i]
+            max_lr = self.states["max_lr"][pg_i]
+            lr = base_lr + (max_lr - base_lr) * scale_factor
+            ret = {"lr": lr}
 
-        if self.cycle_momentum:
-            momentums = []
-            for base_momentum, max_momentum in zip(self.base_momentums, self.max_momentums):
-                base_height = (max_momentum - base_momentum) * scale_factor
-                if self.scale_mode == 'cycle':
-                    momentum = max_momentum - base_height * self.scale_fn(cycle)
-                else:
-                    momentum = max_momentum - base_height * self.scale_fn(self.last_epoch)
-                momentums.append(momentum)
-            for param_group, momentum in zip(self.optimizer.param_groups, momentums):
+            if self.cycle_momentum:
+                base_momentum = self.states["base_momentum"][pg_i]
+                max_momentum = self.states["max_momentum"][pg_i]
+
+                momentum_height = (max_momentum - base_momentum) * scale_factor * (
+                    self.scale_fn(cycle) if self.scale_mode == "cycle" else self.scale_fn(step)
+                )
+                momentum = max_momentum - momentum_height
                 if self.use_beta1:
-                    param_group['betas'] = (momentum, *param_group['betas'][1:])
+                    ret["betas"] = (momentum, *param_group['betas'][1:])
                 else:
-                    param_group['momentum'] = momentum
+                    ret["momentum"] = momentum
 
-        return lrs
+            rets.append(ret)
+        return rets
 
     def state_dict(self):
         state = super().state_dict()
