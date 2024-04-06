@@ -75,6 +75,18 @@ class _enable_get_lr_call:
         self.o._get_lr_called_within_step = False
 
 
+def _format_param(name: str, param_groups: Sequence[Dict[str, Any]], param: Union[float, Sequence[float]]):
+    """Return correctly formatted targets for each param group."""
+    if isinstance(param, (float, int)):
+        param = [param] * len(param_groups)
+
+    elif isinstance(param, (list, tuple)) and len(param) != len(param_groups):
+        raise ValueError(f"expected {len(param_groups)} values for {name}, got {len(param)}")
+
+    return param
+
+
+
 class Scheduler(_SchedulerBase):
 
     def __init__(
@@ -1181,12 +1193,12 @@ class CyclicLR(Scheduler):
     ):
         param_groups = param_groups or optimizer.param_groups
 
-        self.states["max_lr"] = self._format_param('max_lr', param_groups, max_lr)
+        self.states["max_lr"] = _format_param('max_lr', param_groups, max_lr)
 
         if not base_lr:
             base_lr = [group['lr'] for group in param_groups]
         else:
-            base_lr = self._format_param("base_lr", param_groups, base_lr)
+            base_lr = _format_param("base_lr", param_groups, base_lr)
             if last_step == -1:
                 for lr, group in zip(base_lr, param_groups):
                     group['lr'] = lr
@@ -1213,8 +1225,8 @@ class CyclicLR(Scheduler):
 
             self.use_beta1 = 'betas' in self.optimizer.defaults
 
-            self.states["base_momentum"] = self._format_param('base_momentum', param_groups, base_momentum)
-            self.states["max_momentum"] = self._format_param('max_momentum', param_groups, max_momentum)
+            self.states["base_momentum"] = _format_param('base_momentum', param_groups, base_momentum)
+            self.states["max_momentum"] = _format_param('max_momentum', param_groups, max_momentum)
             if last_step == -1:
                 for m_momentum, b_momentum, group in zip(
                         self.states["max_momentum"],
@@ -1256,17 +1268,6 @@ class CyclicLR(Scheduler):
             self.scale_mode = 'iterations'
         else:
             raise ValueError(f'mode {self.mode} is invalid and scale_fn is None')
-
-    @staticmethod
-    def _format_param(name: str, param_groups: Sequence[Dict[str, Any]], param: Union[float, Sequence[float]]):
-        """Return correctly formatted lr/momentum for each param group."""
-        if isinstance(param, (float, int)):
-            param = [param] * len(param_groups)
-
-        elif isinstance(param, (list, tuple)) and len(param) != len(param_groups):
-            raise ValueError(f"expected {len(param_groups)} values for {name}, got {len(param)}")
-
-        return param
 
     def scale_fn(self, x):
         if self._scale_fn_custom is not None:
