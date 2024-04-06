@@ -1667,7 +1667,7 @@ class OneCycleLR(Scheduler):
             max_momentums = _format_param('max_momentum', param_groups, max_momentum)
             base_momentums = _format_param('base_momentum', param_groups, base_momentum)
             if last_step == -1:
-                for m_momentum, b_momentum, group in zip(max_momentums, base_momentums, optimizer.param_groups):
+                for m_momentum, b_momentum, group in zip(max_momentums, base_momentums, param_groups):
                     if self.use_beta1:
                         group['betas'] = (m_momentum, *group['betas'][1:])
                     else:
