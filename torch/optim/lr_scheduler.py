@@ -82,12 +82,24 @@ class Scheduler(_SchedulerBase):
             optimizer: Optimizer,
             param_groups: Sequence[Dict[str, Any]] = None,
             last_step=-1,
-            total_iters: int = -1,
+            total_iters: Optional[int] = None,
     ):
 
         # Attach optimizer
         self.optimizer = optimizer
         self.last_step = last_step
+
+        if total_iters is not None:
+            if not isinstance(total_iters, int):
+                raise TypeError(
+                    f"expected `total_iters` to be an int, "
+                    f"but got {type(total_iters).__name__} in {self.__class__.__name__}."
+                )
+            if total_iters < 1:
+                raise ValueError(
+                    f"expected `total_iters` to be greater than 0, "
+                    f"but got {total_iters} in {self.__class__.__name__}."
+                )
         self.total_iters = total_iters
 
         param_groups = param_groups or optimizer.param_groups
@@ -233,7 +245,7 @@ class Scheduler(_SchedulerBase):
             # This is for supporting the old way of calling step() without passing step
             step = self.last_step + 1
 
-        if self.total_iters != -1 and step >= self.total_iters:
+        if self.total_iters is not None and step >= self.total_iters:
             # If total_iter is set, the scheduler will stop updating learning rate after total_iter steps.
             return
 
@@ -754,8 +766,6 @@ class PolynomialLR(Scheduler):
     ):
         super().__init__(optimizer, total_iters=total_iters, **kwargs)
         self.power = power
-        if self.total_iters < 1:
-            raise ValueError(f"total_iters should be greater than or equal to 1. Got {self.total_iters}")
 
     @property
     def targets(self) -> Sequence[str]:
@@ -1402,7 +1412,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
     def get_lr(self):
         return [
             {self.targets[0]: self.eta_min + (base_target[self.targets[0]] - self.eta_min) * (
-                        1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2}
+                    1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2}
             for base_target in self.base_targets
         ]
 
@@ -1733,7 +1743,7 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
     def __init__(
             self,
             schedulers: Sequence[Scheduler],
-            total_iters: int = -1,
+            total_iters: Optional[int] = None,
             last_step: int = -1
     ):
         if len(schedulers) < 1:
@@ -1754,6 +1764,17 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
                 )
         self.schedulers = schedulers
         self.last_step = last_step
+
+        if total_iters is not None:
+            if not isinstance(total_iters, int):
+                raise TypeError(
+                    f"Expected integer type for total_iters, but got {type(total_iters)} in {self.__class__.__name__}."
+                )
+            if total_iters < 1:
+                raise ValueError(
+                    f"Expected positive integer for total_iters, but got {total_iters} in {self.__class__.__name__}."
+                )
+
         self.total_iters = total_iters
 
     @property
@@ -1770,7 +1791,7 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
 
     def step(self, *, step: Optional[int] = None, **kwargs):
         self.last_step = self.last_step + 1 if step is None else step
-        if self.total_iters != -1 and self.last_step >= self.total_iters:
+        if self.total_iters is not None and self.last_step >= self.total_iters:
             return
 
         self.step_schedulers(step=self.last_step, **kwargs)
@@ -1854,7 +1875,7 @@ class SequentialLR(ComposeScheduler):
                 f"number of milestones to be equal to {len(milestones)}"
             )
 
-        if self.total_iters != -1:
+        if self.total_iters is not None:
             if milestones[-1] >= self.total_iters:
                 raise ValueError(
                     f"Last milestone point {milestones[-1]} should be less than total_iters {self.total_iters}"
