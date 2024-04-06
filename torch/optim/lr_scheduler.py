@@ -775,8 +775,8 @@ class PolynomialLR(Scheduler):
             total_iters: int = 5,
             **kwargs,
     ):
-        super().__init__(optimizer, total_iters=total_iters, **kwargs)
         self.power = power
+        super().__init__(optimizer, total_iters=total_iters, **kwargs)
 
     @property
     def targets(self) -> Sequence[str]:
