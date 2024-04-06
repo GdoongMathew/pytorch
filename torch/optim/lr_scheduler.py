@@ -5,7 +5,7 @@ import warnings
 import weakref
 import collections
 from collections import Counter
-from typing import Sequence, Optional, Dict, Any, Union, Literal, Callable
+from typing import Sequence, Optional, Dict, Any, Union, Literal, Callable, NoReturn
 from typing_extensions import deprecated
 from functools import wraps, partial
 
@@ -83,7 +83,6 @@ class Scheduler(_SchedulerBase):
             param_groups: Sequence[Dict[str, Any]] = None,
             last_step=-1,
             total_iters: int = -1,
-
     ):
 
         # Attach optimizer
@@ -1918,16 +1917,21 @@ class OneCycleLR(LRScheduler):
 
 
 class ComposeScheduler(_SchedulerBase, abc.ABC):
-    def __init__(self, schedulers: Sequence[_SchedulerBase]):
+    def __init__(
+            self,
+            schedulers: Sequence[Scheduler],
+            total_iters: int = -1,
+            last_step: int = -1
+    ):
         if len(schedulers) < 1:
             raise ValueError(f"{self.__class__.__name__} expects at least one scheduler, but got no scheduler.")
 
         base_optimizer = schedulers[0].optimizer
 
         for scheduler_idx, scheduler in enumerate(schedulers):
-            if not isinstance(scheduler, _SchedulerBase):
+            if not isinstance(scheduler, Scheduler):
                 raise TypeError(
-                    f"{self.__class__.__name__} expects all schedulers to be of type _SchedulerBase, but got "
+                    f"{self.__class__.__name__} expects all schedulers to be of type `Scheduler`, but got "
                     f"an object of type {type(scheduler)} at index {scheduler_idx}"
                 )
             if scheduler.optimizer != base_optimizer:
@@ -1936,6 +1940,31 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
                     f"got schedulers at index {scheduler_idx} to be different than the optimizer passed in."
                 )
         self.schedulers = schedulers
+        self.last_step = last_step
+        self.total_iters = total_iters
+
+    @property
+    def last_step(self):
+        if "last_step" not in self.states:
+            self.states.setdefault("last_step", -1)
+        return self.states["last_step"]
+
+    @last_step.setter
+    def last_step(self, value: int):
+        if not isinstance(value, int):
+            raise TypeError(f"Expected integer type for last_step, but got {type(value)}.")
+        self.states["last_step"] = value
+
+    def step(self, *, step: Optional[int] = None, **kwargs):
+        self.last_step = self.last_step + 1 if step is None else step
+        if self.total_iters != -1 and self.last_step >= self.total_iters:
+            return
+
+        self.step_schedulers(step=self.last_step, **kwargs)
+
+    @abc.abstractmethod
+    def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
+        raise NotImplementedError(f"get_targets() is not implemented in {self.__class__.__name__}")
 
     @property
     def optimizer(self) -> Optimizer:
@@ -1949,13 +1978,16 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
     def load_state_dict(self, state_dict):
         schedulers_state_dict = state_dict.pop('schedulers')
         self.__dict__.update(state_dict)
+        # Restore state_dict keys in order to prevent side effects
+        # https://github.com/pytorch/pytorch/issues/32756
+        self.__dict__["schedulers"] = [schedulers_state_dict]
 
         for idx, scheduler_state_dict in enumerate(schedulers_state_dict):
             self.schedulers[idx].load_state_dict(scheduler_state_dict)
 
     @property
-    def last_targets(self) -> Sequence[Dict[str, Any]]:
-        targets = self.schedulers[0].last_targets
-        for scheduler in self.schedulers[1:]:
-            targets += scheduler.last_targets
-        return targets
+    def last_targets(self) -> Dict[str, Sequence[Dict[str, Any]]]:
+        return {
+            scheduler.__class__.__name__: scheduler.last_targets
+            for scheduler in self.schedulers
+        }
