@@ -986,7 +986,6 @@ class ReduceLROnPlateau(Scheduler):
         self.best = None
         self.mode_worse = None  # the worse value for the chosen mode
         self.eps = eps
-        self.last_epoch = 0
 
         self._init_is_better()
         self._reset()
@@ -1183,7 +1182,7 @@ class CyclicLR(Scheduler):
             step_size_down: Optional[int] = None,
             mode: Literal["triangular", "triangular2", "exp_range"] = "triangular",
             gamma: float = 1.,
-            scale_fn: Optional[Callable] = None,
+            scale_fn: Optional[Callable[[float], float]] = None,
             scale_mode: Literal["cycle", "iterations"] = "cycle",
             cycle_momentum: bool = True,
             base_momentum: Optional[Union[float, Sequence[float]]] = 0.8,
@@ -1572,7 +1571,7 @@ class OneCycleLR(Scheduler):
     def __init__(
             self,
             optimizer: Optimizer,
-            max_lr: float,
+            max_lr: Union[float, Sequence[float]],
             total_iters: Optional[int] = None,
             epochs: Optional[int] = None,
             steps_per_epoch: Optional[int] = None,
@@ -1586,7 +1585,7 @@ class OneCycleLR(Scheduler):
             final_div_factor: float = 1e4,
             three_phase: bool = False,
             last_step: int = -1,
-        ):
+    ):
         param_groups = param_groups or optimizer.param_groups
 
         # Validate total_steps
