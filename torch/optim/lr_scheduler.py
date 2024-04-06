@@ -1461,7 +1461,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
         return self.get_lr()
 
 
-class OneCycleLR(LRScheduler):
+class OneCycleLR(Scheduler):
     r"""Sets the learning rate of each parameter group according to the
     1cycle learning rate policy. The 1cycle policy anneals the learning
     rate from an initial learning rate to some maximum learning rate and then
@@ -1568,60 +1568,54 @@ class OneCycleLR(LRScheduler):
         https://arxiv.org/abs/1708.07120
     """
 
-    def __init__(self,
-                 optimizer,
-                 max_lr,
-                 total_steps=None,
-                 epochs=None,
-                 steps_per_epoch=None,
-                 pct_start=0.3,
-                 anneal_strategy='cos',
-                 cycle_momentum=True,
-                 base_momentum=0.85,
-                 max_momentum=0.95,
-                 div_factor=25.,
-                 final_div_factor=1e4,
-                 three_phase=False,
-                 last_epoch=-1,
-                 verbose="deprecated"):
-
-        # Validate optimizer
-        if not isinstance(optimizer, Optimizer):
-            raise TypeError(f'{type(optimizer).__name__} is not an Optimizer')
-        self.optimizer = optimizer
+    def __init__(
+            self,
+            optimizer: Optimizer,
+            max_lr: float,
+            total_iters: Optional[int] = None,
+            epochs: Optional[int] = None,
+            steps_per_epoch: Optional[int] = None,
+            param_groups: Optional[Sequence[Dict[str, Any]]] = None,
+            pct_start: float = 0.3,
+            anneal_strategy: Literal["cos", "linear"] = "cos",
+            cycle_momentum: bool = True,
+            base_momentum: float = 0.85,
+            max_momentum: float = 0.95,
+            div_factor: float = 25.,
+            final_div_factor: float = 1e4,
+            three_phase: bool = False,
+            last_step: int = -1,
+        ):
+        param_groups = param_groups or optimizer.param_groups
 
         # Validate total_steps
-        if total_steps is None and epochs is None and steps_per_epoch is None:
-            raise ValueError("You must define either total_steps OR (epochs AND steps_per_epoch)")
-        elif total_steps is not None:
-            if total_steps <= 0 or not isinstance(total_steps, int):
-                raise ValueError(f"Expected positive integer total_steps, but got {total_steps}")
-            self.total_steps = total_steps
-        else:
+        if total_iters is None and epochs is None and steps_per_epoch is None:
+            raise ValueError("You must define either `total_iters` OR (epochs AND steps_per_epoch)")
+        if total_iters is None:
             if epochs <= 0 or not isinstance(epochs, int):
                 raise ValueError(f"Expected positive integer epochs, but got {epochs}")
             if steps_per_epoch <= 0 or not isinstance(steps_per_epoch, int):
                 raise ValueError(f"Expected positive integer steps_per_epoch, but got {steps_per_epoch}")
-            self.total_steps = epochs * steps_per_epoch
+            total_iters = epochs * steps_per_epoch
 
         if three_phase:
             self._schedule_phases = [
                 {
-                    'end_step': float(pct_start * self.total_steps) - 1,
+                    'end_step': float(pct_start * total_iters) - 1,
                     'start_lr': 'initial_lr',
                     'end_lr': 'max_lr',
                     'start_momentum': 'max_momentum',
                     'end_momentum': 'base_momentum',
                 },
                 {
-                    'end_step': float(2 * pct_start * self.total_steps) - 2,
+                    'end_step': float(2 * pct_start * total_iters) - 2,
                     'start_lr': 'max_lr',
                     'end_lr': 'initial_lr',
                     'start_momentum': 'base_momentum',
                     'end_momentum': 'max_momentum',
                 },
                 {
-                    'end_step': self.total_steps - 1,
+                    'end_step': total_iters - 1,
                     'start_lr': 'initial_lr',
                     'end_lr': 'min_lr',
                     'start_momentum': 'max_momentum',
@@ -1631,14 +1625,14 @@ class OneCycleLR(LRScheduler):
         else:
             self._schedule_phases = [
                 {
-                    'end_step': float(pct_start * self.total_steps) - 1,
+                    'end_step': float(pct_start * total_iters) - 1,
                     'start_lr': 'initial_lr',
                     'end_lr': 'max_lr',
                     'start_momentum': 'max_momentum',
                     'end_momentum': 'base_momentum',
                 },
                 {
-                    'end_step': self.total_steps - 1,
+                    'end_step': total_iters - 1,
                     'start_lr': 'max_lr',
                     'end_lr': 'min_lr',
                     'start_momentum': 'base_momentum',
@@ -1653,15 +1647,13 @@ class OneCycleLR(LRScheduler):
         # Validate anneal_strategy
         if anneal_strategy not in ['cos', 'linear']:
             raise ValueError(f"anneal_strategy must by one of 'cos' or 'linear', instead got {anneal_strategy}")
-        elif anneal_strategy == 'cos':
-            self.anneal_func = self._annealing_cos
-        elif anneal_strategy == 'linear':
-            self.anneal_func = self._annealing_linear
+
+        self.anneal_func = self._annealing_cos if anneal_strategy == "cos" else self._annealing_linear
 
         # Initialize learning rate variables
-        max_lrs = self._format_param('max_lr', self.optimizer, max_lr)
-        if last_epoch == -1:
-            for idx, group in enumerate(self.optimizer.param_groups):
+        max_lrs = _format_param('max_lr', param_groups, max_lr)
+        if last_step == -1:
+            for idx, group in enumerate(param_groups):
                 group['initial_lr'] = max_lrs[idx] / div_factor
                 group['max_lr'] = max_lrs[idx]
                 group['min_lr'] = group['initial_lr'] / final_div_factor
@@ -1672,9 +1664,9 @@ class OneCycleLR(LRScheduler):
             if 'momentum' not in self.optimizer.defaults and 'betas' not in self.optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
             self.use_beta1 = 'betas' in self.optimizer.defaults
-            max_momentums = self._format_param('max_momentum', optimizer, max_momentum)
-            base_momentums = self._format_param('base_momentum', optimizer, base_momentum)
-            if last_epoch == -1:
+            max_momentums = _format_param('max_momentum', param_groups, max_momentum)
+            base_momentums = _format_param('base_momentum', param_groups, base_momentum)
+            if last_step == -1:
                 for m_momentum, b_momentum, group in zip(max_momentums, base_momentums, optimizer.param_groups):
                     if self.use_beta1:
                         group['betas'] = (m_momentum, *group['betas'][1:])
@@ -1683,16 +1675,14 @@ class OneCycleLR(LRScheduler):
                     group['max_momentum'] = m_momentum
                     group['base_momentum'] = b_momentum
 
-        super().__init__(optimizer, last_epoch, verbose)
+        super().__init__(optimizer, total_iters=total_iters, last_step=last_step)
 
-    def _format_param(self, name, optimizer, param):
-        """Return correctly formatted lr/momentum for each param group."""
-        if isinstance(param, (list, tuple)):
-            if len(param) != len(optimizer.param_groups):
-                raise ValueError(f"expected {len(optimizer.param_groups)} values for {name}, got {len(param)}")
-            return param
-        else:
-            return [param] * len(optimizer.param_groups)
+    @property
+    def targets(self) -> Sequence[str]:
+        targets = ["lr"]
+        if self.cycle_momentum:
+            targets += ["momentum"] if self.use_beta1 else ["betas"]
+        return targets
 
     @staticmethod
     def _annealing_cos(start, end, pct):
@@ -1705,24 +1695,24 @@ class OneCycleLR(LRScheduler):
         "Linearly anneal from `start` to `end` as pct goes from 0.0 to 1.0."
         return (end - start) * pct + start
 
-    def get_lr(self):
+    def get_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        lrs = []
-        step_num = self.last_epoch
+        if step > self.total_iters:
+            raise ValueError(
+                f"Tried to step {step} times. The specified number of total steps is {self.total_iters}."
+            )
 
-        if step_num > self.total_steps:
-            raise ValueError("Tried to step {} times. The specified number of total steps is {}"
-                             .format(step_num, self.total_steps))
+        targets = [{} for _ in range(len(self.param_groups))]
 
-        for group in self.optimizer.param_groups:
+        for pg_i, group in enumerate(self.param_groups):
             start_step = 0
             for i, phase in enumerate(self._schedule_phases):
                 end_step = phase['end_step']
-                if step_num <= end_step or i == len(self._schedule_phases) - 1:
-                    pct = (step_num - start_step) / (end_step - start_step)
+                if step <= end_step or i == len(self._schedule_phases) - 1:
+                    pct = (step - start_step) / (end_step - start_step)
                     computed_lr = self.anneal_func(group[phase['start_lr']], group[phase['end_lr']], pct)
                     if self.cycle_momentum:
                         computed_momentum = self.anneal_func(group[phase['start_momentum']],
@@ -1730,14 +1720,15 @@ class OneCycleLR(LRScheduler):
                     break
                 start_step = phase['end_step']
 
-            lrs.append(computed_lr)
+            target = {"lr": computed_lr}
             if self.cycle_momentum:
                 if self.use_beta1:
-                    group['betas'] = (computed_momentum, *group['betas'][1:])
+                    target["betas"] = (computed_momentum, *group['betas'][1:])
                 else:
-                    group['momentum'] = computed_momentum
+                    target["momentum"] = computed_momentum
+            targets[pg_i] = target
 
-        return lrs
+        return targets
 
 
 class ComposeScheduler(_SchedulerBase, abc.ABC):
