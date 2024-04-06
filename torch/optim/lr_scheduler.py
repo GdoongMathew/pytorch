@@ -86,7 +86,6 @@ def _format_param(name: str, param_groups: Sequence[Dict[str, Any]], param: Unio
     return param
 
 
-
 class Scheduler(_SchedulerBase):
 
     def __init__(
@@ -265,7 +264,7 @@ class Scheduler(_SchedulerBase):
         self.states.update(kwargs)
 
         with _enable_get_lr_call(self):
-            targets = self.get_targets(**self.states)
+            targets = self.get_targets(step=step, **self.states)
 
             if targets is None:
                 return
