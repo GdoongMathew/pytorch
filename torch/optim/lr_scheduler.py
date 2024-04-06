@@ -1193,17 +1193,17 @@ class CyclicLR(Scheduler):
     ):
         param_groups = param_groups or optimizer.param_groups
 
-        self.states["max_lr"] = _format_param('max_lr', param_groups, max_lr)
+        max_lrs = _format_param('max_lr', param_groups, max_lr)
+        base_lrs = [group["lr"] for group in param_groups] \
+            if not base_lr else _format_param("base_lr", param_groups, base_lr)
 
-        if not base_lr:
-            base_lr = [group['lr'] for group in param_groups]
-        else:
-            base_lr = _format_param("base_lr", param_groups, base_lr)
-            if last_step == -1:
-                for lr, group in zip(base_lr, param_groups):
-                    group['lr'] = lr
-
-        self.states["base_lr"] = base_lr
+        if last_step == -1:
+            for base_lr, max_lr, group in zip(base_lrs, max_lrs, param_groups):
+                group.update({
+                    "lr": base_lr,
+                    "base_lr": base_lr,
+                    "max_lr": max_lr,
+                })
 
         step_size_down = step_size_down or step_size_up
 
@@ -1225,12 +1225,12 @@ class CyclicLR(Scheduler):
 
             self.use_beta1 = 'betas' in self.optimizer.defaults
 
-            self.states["base_momentum"] = _format_param('base_momentum', param_groups, base_momentum)
-            self.states["max_momentum"] = _format_param('max_momentum', param_groups, max_momentum)
+            base_momentums = _format_param('base_momentum', param_groups, base_momentum)
+            max_momentums = _format_param('max_momentum', param_groups, max_momentum)
             if last_step == -1:
                 for m_momentum, b_momentum, group in zip(
-                        self.states["max_momentum"],
-                        self.states["base_momentum"],
+                        max_momentums,
+                        base_momentums,
                         param_groups,
                 ):
                     if self.use_beta1:
@@ -1306,27 +1306,29 @@ class CyclicLR(Scheduler):
         else:
             scale_factor = (x - 1) / (self.step_ratio - 1)
 
-        rets = []
+        rets = [{} for _ in self.param_groups]
         for pg_i, param_group in enumerate(self.param_groups):
-            base_lr = self.states["base_lr"][pg_i]
-            max_lr = self.states["max_lr"][pg_i]
-            lr = base_lr + (max_lr - base_lr) * scale_factor
+            base_lr, max_lr = param_group["base_lr"], param_group["max_lr"]
+            base_height = (max_lr - base_lr) * scale_factor
+            if self.scale_mode == "cycle":
+                lr = base_lr + base_height * self.scale_fn(cycle)
+            else:
+                lr = base_lr + base_height * self.scale_fn(step)
             ret = {"lr": lr}
 
             if self.cycle_momentum:
-                base_momentum = self.states["base_momentum"][pg_i]
-                max_momentum = self.states["max_momentum"][pg_i]
-
-                momentum_height = (max_momentum - base_momentum) * scale_factor * (
-                    self.scale_fn(cycle) if self.scale_mode == "cycle" else self.scale_fn(step)
-                )
-                momentum = max_momentum - momentum_height
+                base_momentum, max_momentum = param_group["base_momentum"], param_group["max_momentum"]
+                base_height = (max_momentum - base_momentum) * scale_factor
+                if self.scale_mode == 'cycle':
+                    momentum = max_momentum - base_height * self.scale_fn(cycle)
+                else:
+                    momentum = max_momentum - base_height * self.scale_fn(step)
                 if self.use_beta1:
                     ret["betas"] = (momentum, *param_group['betas'][1:])
                 else:
                     ret["momentum"] = momentum
 
-            rets.append(ret)
+            rets[pg_i] = ret
         return rets
 
     def state_dict(self):
