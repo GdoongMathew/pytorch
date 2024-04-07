@@ -60,7 +60,7 @@ class _SchedulerBase(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def step(self, *, step, **kwargs):
+    def step(self, epoch: Optional[int] = ..., **kwargs):
         raise NotImplementedError
 
 
@@ -223,7 +223,7 @@ class Scheduler(_SchedulerBase):
         # Compute learning rate using chainable form of the scheduler
         raise NotImplementedError
 
-    def step(self, step=None, **kwargs):
+    def step(self, epoch: Optional[int] = None, **kwargs):
         # Raise a warning if old pattern is detected
         # https://github.com/pytorch/pytorch/issues/20124
         if self._step_count == 1:
@@ -243,9 +243,9 @@ class Scheduler(_SchedulerBase):
                               "https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate", UserWarning)
         self._step_count += 1
 
-        if step is not None:
+        if epoch is not None:
             warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
-            self.last_step = step
+            self.last_step = epoch
         else:
             self.last_step += 1
 
@@ -1769,10 +1769,10 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
             raise TypeError(f"Expected integer type for last_step, but got {type(value)}.")
         self._last_step = value
 
-    def step(self, *, step: Optional[int] = None, **kwargs):
-        if step is not None:
+    def step(self, epoch: Optional[int] = None, **kwargs):
+        if epoch is not None:
             warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
-            self.last_step = step
+            self.last_step = epoch
         else:
             self.last_step += 1
 
