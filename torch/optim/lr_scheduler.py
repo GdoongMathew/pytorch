@@ -63,13 +63,6 @@ class _SchedulerBase(abc.ABC):
     def step(self, *, step, **kwargs):
         raise NotImplementedError
 
-    @property
-    def states(self) -> Dict[str, Any]:
-        """The state of the scheduler, including `_step_counts`, or `metrics` in `ReduceLROnPlateau`."""
-        if not hasattr(self, "_states"):
-            self._states = {}
-        return self._states
-
 
 class _enable_get_lr_call:
 
@@ -183,26 +176,15 @@ class Scheduler(_SchedulerBase):
         return [{key: param_group[key] for key in self.targets} for param_group in self.param_groups]
 
     @property
-    def _step_count(self) -> int:
-        """The number of times `lr_scheduler.step()` has been called."""
-        if "_step_count" not in self.states:
-            self.states.setdefault("_step_count", 0)
-        return self.states["_step_count"]
-
-    @_step_count.setter
-    def _step_count(self, value: int):
-        self.states["_step_count"] = value
-
-    @property
     def last_step(self):
         """The value last time passed to `lr_scheduler.step().` as `step`."""
-        if "last_step" not in self.states:
-            self.states.setdefault("last_step", -1)
-        return self.states["last_step"]
+        return self._last_step
 
     @last_step.setter
     def last_step(self, value: int):
-        self.states["last_step"] = value
+        if not isinstance(value, int):
+            raise TypeError(f"expected `last_step` to be an int, but got {type(value).__name__}.")
+        self._last_step = value
 
     @property
     def optimizer(self) -> Optimizer:
@@ -241,7 +223,7 @@ class Scheduler(_SchedulerBase):
         # Compute learning rate using chainable form of the scheduler
         raise NotImplementedError
 
-    def step(self, **kwargs):
+    def step(self, step=None, **kwargs):
         # Raise a warning if old pattern is detected
         # https://github.com/pytorch/pytorch/issues/20124
         if self._step_count == 1:
@@ -261,19 +243,18 @@ class Scheduler(_SchedulerBase):
                               "https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate", UserWarning)
         self._step_count += 1
 
-        if {"step", "epoch"}.intersection(kwargs.keys()):
+        if step is not None:
             warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
-
-        self.last_step += 1
+            self.last_step = step
+        else:
+            self.last_step += 1
 
         if self.total_iters is not None and self.last_step >= self.total_iters:
             # If total_iter is set, the scheduler will stop updating learning rate after total_iter steps.
             return
 
-        self.states.update(kwargs)
-
         with _enable_get_lr_call(self):
-            targets = self.get_targets(step=self.last_step, **self.states)
+            targets = self.get_targets(step=self.last_step, **kwargs)
 
             if targets is None:
                 return
@@ -1780,15 +1761,13 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
 
     @property
     def last_step(self):
-        if "last_step" not in self.states:
-            self.states.setdefault("last_step", -1)
-        return self.states["last_step"]
+        return self._last_step
 
     @last_step.setter
     def last_step(self, value: int):
         if not isinstance(value, int):
             raise TypeError(f"Expected integer type for last_step, but got {type(value)}.")
-        self.states["last_step"] = value
+        self._last_step = value
 
     def step(self, *, step: Optional[int] = None, **kwargs):
         self.last_step = self.last_step + 1 if step is None else step
