@@ -1770,7 +1770,12 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
         self._last_step = value
 
     def step(self, *, step: Optional[int] = None, **kwargs):
-        self.last_step = self.last_step + 1 if step is None else step
+        if step is not None:
+            warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
+            self.last_step = step
+        else:
+            self.last_step += 1
+
         if self.total_iters is not None and self.last_step >= self.total_iters:
             return
 
