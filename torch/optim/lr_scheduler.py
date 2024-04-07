@@ -33,6 +33,15 @@ __all__ = [
     'Scheduler',
 ]
 
+EPOCH_DEPRECATION_WARNING = (
+    "The epoch parameter in `scheduler.step()` was not necessary and is being "
+    "deprecated where possible. Please use `scheduler.step()` to step the "
+    "scheduler. During the deprecation, if epoch is different from None, the "
+    "closed form is used instead of the new chainable form, where available. "
+    "Please open an issue if you are unable to replicate your use case: "
+    "https://github.com/pytorch/pytorch/issues/new/choose."
+)
+
 
 class _SchedulerBase(abc.ABC):
     """https://github.com/pytorch/pytorch/issues/67760"""
@@ -232,7 +241,7 @@ class Scheduler(_SchedulerBase):
         # Compute learning rate using chainable form of the scheduler
         raise NotImplementedError
 
-    def step(self, *, step=None, **kwargs):
+    def step(self, **kwargs):
         # Raise a warning if old pattern is detected
         # https://github.com/pytorch/pytorch/issues/20124
         if self._step_count == 1:
@@ -252,19 +261,19 @@ class Scheduler(_SchedulerBase):
                               "https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate", UserWarning)
         self._step_count += 1
 
-        if step is None:
-            # This is for supporting the old way of calling step() without passing step
-            step = self.last_step + 1
+        if {"step", "epoch"}.intersection(kwargs.keys()):
+            warnings.warn(EPOCH_DEPRECATION_WARNING, UserWarning)
 
-        if self.total_iters is not None and step >= self.total_iters:
+        self.last_step += 1
+
+        if self.total_iters is not None and self.last_step >= self.total_iters:
             # If total_iter is set, the scheduler will stop updating learning rate after total_iter steps.
             return
 
-        self.last_step = step
         self.states.update(kwargs)
 
         with _enable_get_lr_call(self):
-            targets = self.get_targets(step=step, **self.states)
+            targets = self.get_targets(step=self.last_step, **self.states)
 
             if targets is None:
                 return
