@@ -99,6 +99,8 @@ class Scheduler(_SchedulerBase):
     ):
 
         # Attach optimizer
+        if not isinstance(optimizer, Optimizer):
+            raise TypeError(f"{type(optimizer).__name__} is not an `Optimizer`.")
         self.optimizer = optimizer
         self.last_step = last_step
 
@@ -186,16 +188,6 @@ class Scheduler(_SchedulerBase):
             raise TypeError(f"expected `last_step` to be an int, but got {type(value).__name__}.")
         self._last_step = value
 
-    @property
-    def optimizer(self) -> Optimizer:
-        return self._optimizer
-
-    @optimizer.setter
-    def optimizer(self, optimizer: Optimizer):
-        if not isinstance(optimizer, Optimizer):
-            raise TypeError(f'{type(optimizer).__name__} is not an `Optimizer`')
-        self._optimizer = optimizer
-
     def _initial_step(self):
         """Initialize step counts and performs a step"""
         self.optimizer._step_count = 0
@@ -208,7 +200,7 @@ class Scheduler(_SchedulerBase):
         It contains an entry for every variable in self.__dict__ which
         is not the optimizer.
         """
-        return {key: value for key, value in self.__dict__.items() if key != '_optimizer'}
+        return {key: value for key, value in self.__dict__.items() if key != 'optimizer'}
 
     def load_state_dict(self, state_dict):
         """Loads the schedulers state.
@@ -335,7 +327,7 @@ class LambdaLR(Scheduler):
         When saving or loading the scheduler, please make sure to also save or load the state of the optimizer.
         """
 
-        state_dict = {key: value for key, value in self.__dict__.items() if key not in ('_optimizer', 'lr_lambdas')}
+        state_dict = {key: value for key, value in self.__dict__.items() if key not in ('optimizer', 'lr_lambdas')}
         state_dict['lr_lambdas'] = [None] * len(self.lr_lambdas)
 
         for idx, fn in enumerate(self.lr_lambdas):
