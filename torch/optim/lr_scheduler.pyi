@@ -138,8 +138,7 @@ class CosineAnnealingLR(Scheduler):
         optimizer: Optimizer,
         total_iters: int,
         eta_min: float = ...,
-        last_epoch: int = ...,
-        verbose: bool = ...,
+        **kwargs,
     ) -> None: ...
 
 class ReduceLROnPlateau(Scheduler):

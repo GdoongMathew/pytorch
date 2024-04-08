@@ -1645,9 +1645,9 @@ class OneCycleLR(Scheduler):
         # Initialize momentum variables
         self.cycle_momentum = cycle_momentum
         if self.cycle_momentum:
-            if 'momentum' not in self.optimizer.defaults and 'betas' not in self.optimizer.defaults:
+            if 'momentum' not in optimizer.defaults and 'betas' not in optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
-            self.use_beta1 = 'betas' in self.optimizer.defaults
+            self.use_beta1 = 'betas' in optimizer.defaults
             max_momentums = _format_param('max_momentum', param_groups, max_momentum)
             base_momentums = _format_param('base_momentum', param_groups, base_momentum)
             if last_step == -1:
