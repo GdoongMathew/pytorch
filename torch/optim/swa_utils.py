@@ -5,7 +5,7 @@ import warnings
 
 import torch
 from torch.nn import Module
-from torch.optim.lr_scheduler import LRScheduler
+from torch.optim.lr_scheduler import Scheduler
 from torch.utils._foreach_utils import _get_foreach_kernels_supported_devices
 
 __all__ = [
@@ -276,7 +276,7 @@ def update_bn(loader, model, device=None):
     model.train(was_training)
 
 
-class SWALR(LRScheduler):
+class SWALR(Scheduler):
     r"""Anneals the learning rate in each parameter group to a fixed value.
 
     This learning rate scheduler is meant to be used with Stochastic Weight
@@ -319,7 +319,7 @@ class SWALR(LRScheduler):
     .. _Averaging Weights Leads to Wider Optima and Better Generalization:
         https://arxiv.org/abs/1803.05407
     """
-    def __init__(self, optimizer, swa_lr, anneal_epochs=10, anneal_strategy='cos', last_epoch=-1):
+    def __init__(self, optimizer, swa_lr, anneal_epochs=10, anneal_strategy='cos', last_step=-1):
         swa_lrs = self._format_param(optimizer, swa_lr)
         for swa_lr, group in zip(swa_lrs, optimizer.param_groups):
             group['swa_lr'] = swa_lr
@@ -333,7 +333,11 @@ class SWALR(LRScheduler):
         if not isinstance(anneal_epochs, int) or anneal_epochs < 0:
             raise ValueError(f"anneal_epochs must be equal or greater than 0, got {anneal_epochs}")
         self.anneal_epochs = anneal_epochs
-        super().__init__(optimizer, last_epoch)
+        super().__init__(optimizer, last_step=last_step)
+
+    @property
+    def targets(self):
+        return ["lr"]
 
     @staticmethod
     def _format_param(optimizer, swa_lrs):
@@ -360,18 +364,20 @@ class SWALR(LRScheduler):
             return swa_lr
         return (lr - alpha * swa_lr) / (1 - alpha)
 
-    def get_lr(self):
+    def get_targets(self, *, step: int, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
-        step = self._step_count - 1
         if self.anneal_epochs == 0:
             step = max(1, step)
         prev_t = max(0, min(1, (step - 1) / max(1, self.anneal_epochs)))
         prev_alpha = self.anneal_func(prev_t)
         prev_lrs = [self._get_initial_lr(group['lr'], group['swa_lr'], prev_alpha)
-                    for group in self.optimizer.param_groups]
+                    for group in self.param_groups]
         t = max(0, min(1, step / max(1, self.anneal_epochs)))
         alpha = self.anneal_func(t)
-        return [group['swa_lr'] * alpha + lr * (1 - alpha)
-                for group, lr in zip(self.optimizer.param_groups, prev_lrs)]
+        target = self.targets[0]
+        return [
+            {target: group['swa_lr'] * alpha + lr * (1 - alpha)}
+            for group, lr in zip(self.param_groups, prev_lrs)
+        ]
