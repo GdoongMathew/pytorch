@@ -54,8 +54,8 @@ class _SchedulerBase(abc.ABC):
     def load_state_dict(self, state_dict):
         raise NotImplementedError
 
-    @abc.abstractmethod
     @property
+    @abc.abstractmethod
     def optimizer(self) -> Optimizer:
         raise NotImplementedError
 
