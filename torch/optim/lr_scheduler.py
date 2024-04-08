@@ -670,7 +670,7 @@ class LinearLR(Scheduler):
             return [{target: param_group[target]} for param_group in self.param_groups]
 
         return [
-            {target: param_group[target](1. + (self.end_factor - self.start_factor) /
+            {target: param_group[target] * (1. + (self.end_factor - self.start_factor) /
                                          (self.total_iters * self.start_factor + (step - 1) * (
                                                  self.end_factor - self.start_factor)))}
             for param_group in self.param_groups
@@ -1205,7 +1205,7 @@ class CyclicLR(Scheduler):
             if 'momentum' not in optimizer.defaults and 'betas' not in optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
 
-            self.use_beta1 = 'betas' in self.optimizer.defaults
+            self.use_beta1 = 'betas' in optimizer.defaults
 
             base_momentums = _format_param('base_momentum', param_groups, base_momentum)
             max_momentums = _format_param('max_momentum', param_groups, max_momentum)
