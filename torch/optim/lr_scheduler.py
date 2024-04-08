@@ -116,7 +116,7 @@ class Scheduler(_SchedulerBase):
         self.total_iters = total_iters
 
         param_groups = param_groups or optimizer.param_groups
-        if not isinstance(param_groups, collections.Sequence):
+        if not isinstance(param_groups, collections.abc.Sequence):
             raise TypeError(f"param_groups should be a sequence of mappings, but got {type(param_groups)}.")
 
         # Initialize epoch and base learning rates
