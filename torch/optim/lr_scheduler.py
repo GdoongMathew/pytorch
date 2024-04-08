@@ -45,6 +45,7 @@ EPOCH_DEPRECATION_WARNING = (
 
 class _SchedulerBase(abc.ABC):
     """https://github.com/pytorch/pytorch/issues/67760"""
+    optimizer: Optimizer
 
     @abc.abstractmethod
     def state_dict(self):
@@ -52,11 +53,6 @@ class _SchedulerBase(abc.ABC):
 
     @abc.abstractmethod
     def load_state_dict(self, state_dict):
-        raise NotImplementedError
-
-    @property
-    @abc.abstractmethod
-    def optimizer(self) -> Optimizer:
         raise NotImplementedError
 
     @abc.abstractmethod
