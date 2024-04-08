@@ -188,7 +188,7 @@ class Scheduler(_SchedulerBase):
         """Initialize step counts and performs a step"""
         self.optimizer._step_count = 0
         self._step_count = 0
-        self.step(step=self._step_count)
+        self.step()
 
     def state_dict(self):
         """Returns the state of the scheduler as a :class:`dict`.
@@ -460,7 +460,7 @@ class StepLR(Scheduler):
 
         target = self.targets[0]
         return [
-            {target: base_target[target] * self.gamma ** (step // self.step_size)}
+            {target: base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)}
             for base_target in self.base_targets
         ]
 
@@ -970,6 +970,12 @@ class ReduceLROnPlateau(Scheduler):
 
         super().__init__(optimizer=optimizer, param_groups=param_groups, **kwargs)
 
+    def _initial_step(self):
+        """Initialize step counts and performs a step"""
+        self.optimizer._step_count = 0
+        self._step_count = 0
+        self.step(metrics=None)
+
     @property
     def targets(self) -> Sequence[str]:
         return ["lr"]
@@ -1390,7 +1396,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
 
     def get_lr(self):
         return [
-            {self.targets[0]: self.eta_min + (base_target[self.targets[0]] - self.eta_min) * (
+            {self.targets[0]: self.eta_min + (base_target[f"initial_{self.targets[0]}"] - self.eta_min) * (
                     1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2}
             for base_target in self.base_targets
         ]
@@ -1867,7 +1873,7 @@ class SequentialLR(ComposeScheduler):
         idx = bisect_right(self.milestones, step)
         scheduler = self.schedulers[idx]
         sch_step = step if idx == 0 else step - self.milestones[idx - 1]
-        scheduler.step(step=sch_step, **kwargs)
+        scheduler.step(epoch=sch_step, **kwargs)
 
 
 class ChainedScheduler(ComposeScheduler):
@@ -1897,4 +1903,4 @@ class ChainedScheduler(ComposeScheduler):
 
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
         for scheduler in self.schedulers:
-            scheduler.step(step=step, **kwargs)
+            scheduler.step(epoch=step, **kwargs)
