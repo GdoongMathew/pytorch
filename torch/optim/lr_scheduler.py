@@ -1799,11 +1799,9 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
             self.schedulers[idx].load_state_dict(scheduler_state_dict)
 
     @property
-    def last_targets(self) -> Dict[str, Sequence[Dict[str, Any]]]:
-        return {
-            scheduler.__class__.__name__: scheduler.last_targets
-            for scheduler in self.schedulers
-        }
+    @abc.abstractmethod
+    def last_targets(self) -> Sequence[Dict[str, Any]]:
+        raise NotImplementedError(f"last_targets() is not implemented in {self.__class__.__name__}")
 
 
 class SequentialLR(ComposeScheduler):
@@ -1867,13 +1865,18 @@ class SequentialLR(ComposeScheduler):
             group["lr"] = group["initial_lr"]
 
         # Perform the initial step for only the first scheduler
-        self.schedulers[0]._initial_step()
+        self._current_sch = self.schedulers[0]
+        self._current_sch._initial_step()
 
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
         idx = bisect_right(self.milestones, step)
-        scheduler = self.schedulers[idx]
+        self._current_sch = self.schedulers[idx]
         sch_step = step if idx == 0 else step - self.milestones[idx - 1]
-        scheduler.step(epoch=sch_step, **kwargs)
+        self._current_sch.step(epoch=sch_step, **kwargs)
+
+    @property
+    def last_targets(self) -> Sequence[Dict[str, Any]]:
+        return self._current_sch.last_targets
 
 
 class ChainedScheduler(ComposeScheduler):
@@ -1904,3 +1907,10 @@ class ChainedScheduler(ComposeScheduler):
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
         for scheduler in self.schedulers:
             scheduler.step(epoch=step, **kwargs)
+
+    @property
+    def last_targets(self) -> Sequence[Dict[str, Any]]:
+        targets = []
+        for scheduler in self.schedulers:
+            targets.extend(scheduler.last_targets)
+        return targets
