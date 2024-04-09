@@ -513,7 +513,7 @@ class TestLRScheduler(TestCase):
             for x in range(epochs)
         ]
         targets = [single_targets, [x * epochs for x in single_targets]]
-        scheduler = CosineAnnealingLR(self.opt, T_max=epochs, eta_min=eta_min)
+        scheduler = CosineAnnealingLR(self.opt, total_iters=epochs, eta_min=eta_min)
         self._test(scheduler, targets, epochs)
 
     def test_closed_form_step_lr(self):
@@ -568,7 +568,7 @@ class TestLRScheduler(TestCase):
         scheduler.step()
         original_lrs = scheduler.last_targets
         new_scheduler = CosineAnnealingLR(
-            self.opt, total_iters=T_max, eta_min=eta_min, last_epoch=0
+            self.opt, total_iters=T_max, eta_min=eta_min, last_step=0
         )
         new_lrs = new_scheduler.last_targets
         torch.testing.assert_close(original_lrs, new_lrs, rtol=1e-4, atol=1e-5)
@@ -693,7 +693,7 @@ class TestLRScheduler(TestCase):
         scheduler = ReduceLROnPlateau(
             self.opt,
         )
-        self.assertEqual(scheduler.get_last_lr(), [0.5 for param_group in self.opt.param_groups])
+        self.assertEqual(scheduler.last_targets, [{"lr": 0.5} for param_group in self.opt.param_groups])
 
     def test_sequentiallr1(self):
         epochs = 19
@@ -777,7 +777,7 @@ class TestLRScheduler(TestCase):
             MultiStepLR(self.opt, milestones=[4, 8, 10], gamma=0.1),
         ]
         scheduler = ChainedScheduler(schedulers)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_chained_lr1(self):
         epochs = 10
@@ -787,7 +787,7 @@ class TestLRScheduler(TestCase):
             StepLR(self.opt, gamma=0.1, step_size=3)
         ])
         self._test([scheduler], targets, epochs)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_chained_lr2(self):
         epochs = 10
@@ -795,7 +795,7 @@ class TestLRScheduler(TestCase):
         schedulers = [LinearLR(self.opt, start_factor=0.4, total_iters=3)]
         scheduler = ChainedScheduler(schedulers)
         self._test([scheduler], targets, epochs)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_chained_lr3(self):
         epochs = 10
@@ -809,7 +809,7 @@ class TestLRScheduler(TestCase):
         ]
         scheduler = ChainedScheduler(schedulers)
         self._test([scheduler], targets, epochs)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_chained_lr4(self):
         epochs = 9
@@ -826,7 +826,7 @@ class TestLRScheduler(TestCase):
         ]
         scheduler = ChainedScheduler(schedulers)
         self._test([scheduler], targets, epochs)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_chained_lr5(self):
         def poly_lr(lr: float):
@@ -846,7 +846,7 @@ class TestLRScheduler(TestCase):
         ]
         scheduler = ChainedScheduler(schedulers)
         self._test(scheduler, targets, epochs)
-        self.assertEqual(scheduler.get_last_lr(), schedulers[-1].get_last_lr())
+        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
 
     def test_compound_step_and_multistep_lr(self):
         epochs = 10
@@ -1647,7 +1647,7 @@ class TestLRScheduler(TestCase):
             final_div_factor=2,
             base_momentum=1,
             max_momentum=22,
-            total_steps=10,
+            total_iters=10,
             anneal_strategy="linear",
         )
         self._test_cycle_lr(scheduler, lr_targets, momentum_targets, 10)
@@ -1663,7 +1663,7 @@ class TestLRScheduler(TestCase):
             div_factor=25,
             base_momentum=1,
             max_momentum=22,
-            total_steps=10,
+            total_iters=10,
             anneal_strategy="linear",
             pct_start=0.4,
             final_div_factor=4,
@@ -1975,8 +1975,8 @@ class TestLRScheduler(TestCase):
         epochs = 10
         eta_min = 1e-10
         self._check_scheduler_state_dict(
-            lambda: CosineAnnealingLR(self.opt, T_max=epochs, eta_min=eta_min),
-            lambda: CosineAnnealingLR(self.opt, T_max=epochs // 2, eta_min=eta_min / 2),
+            lambda: CosineAnnealingLR(self.opt, total_iters=epochs, eta_min=eta_min),
+            lambda: CosineAnnealingLR(self.opt, total_iters=epochs // 2, eta_min=eta_min / 2),
             epochs=epochs,
         )
 
@@ -2045,7 +2045,7 @@ class TestLRScheduler(TestCase):
             schedulers = [schedulers]
         optimizers = {scheduler.optimizer for scheduler in schedulers}
         for epoch in range(epochs):
-            result = [scheduler.get_last_lr() for scheduler in schedulers]
+            result = [[group["lr"] for group in scheduler.last_targets] for scheduler in schedulers]
             [optimizer.step() for optimizer in optimizers]
             [scheduler.step() for scheduler in schedulers]
             target = [[t[epoch] for t in targets]] * len(schedulers)
