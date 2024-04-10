@@ -237,7 +237,7 @@ class Scheduler(_SchedulerBase):
         else:
             self.last_step += 1
 
-        if self.total_iters is not None and self.last_step >= self.total_iters:
+        if self.total_iters is not None and self.last_step > self.total_iters:
             # If total_iter is set, the scheduler will stop updating learning rate after total_iter steps.
             return
 
