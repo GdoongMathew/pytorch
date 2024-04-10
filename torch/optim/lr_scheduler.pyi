@@ -185,7 +185,7 @@ class CyclicLR(Scheduler):
         optimizer: Optimizer,
         max_lr: Union[float, Sequence[float]],
         base_lr: Optional[Union[float, Sequence[float]]],
-        param_group: Optional[Dict[str, Any]] = ...,
+        param_group: Optional[Sequence[Dict[str, Any]]] = ...,
         step_size_up: int = ...,
         step_size_down: Optional[int] = ...,
         mode: str = ...,
@@ -193,8 +193,8 @@ class CyclicLR(Scheduler):
         scale_fn: Optional[Callable[[float], float]] = ...,
         scale_mode: str = ...,
         cycle_momentum: bool = ...,
-        base_momentum: float = ...,
-        max_momentum: float = ...,
+        base_momentum: Optional[Union[float, Sequence[float]]] = ...,
+        max_momentum: Optional[Union[float, Sequence[float]]] = ...,
         last_step: int = ...,
     ) -> None: ...
     def scale_fn(self, x: Any) -> float: ...

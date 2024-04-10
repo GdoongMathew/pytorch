@@ -128,7 +128,7 @@ class Scheduler(_SchedulerBase):
                             "when resuming an optimizer."
                         )
                     group.setdefault(f"initial_{target}", group[target])
-                    self.base_targets[gi][f"initial_{target}"] = group[target]
+                self.base_targets[gi][f"initial_{target}"] = group[f"initial_{target}"]
 
         self.param_groups = param_groups
 
@@ -707,10 +707,13 @@ class ExponentialLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
+    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
+
+        if step == 0:
+            return None
 
         target = self.targets[0]
         return [{target: param_group[target] * self.gamma} for param_group in self.param_groups]
@@ -842,14 +845,14 @@ class CosineAnnealingLR(Scheduler):
             return
         elif self._step_count == 1 and step > 0:
             return [
-                {target: self.eta_min + (base_target[target] - self.eta_min) *
+                {target: self.eta_min + (base_target[f"initial_{target}"] - self.eta_min) *
                          (1 + math.cos(step * math.pi / self.total_iters)) / 2}
                 for base_target, group in
                 zip(self.base_targets, self.param_groups)
             ]
         elif (step - 1 - self.total_iters) % (2 * self.total_iters) == 0:
             return [
-                {target: group['lr'] + (base_target[target] - self.eta_min) *
+                {target: group['lr'] + (base_target[f"initial_{target}"] - self.eta_min) *
                          (1 - math.cos(math.pi / self.total_iters)) / 2}
                 for base_target, group in
                 zip(self.base_targets, self.param_groups)
@@ -1233,7 +1236,7 @@ class CyclicLR(Scheduler):
     def targets(self) -> Sequence[str]:
         targets = ["lr"]
         if self.cycle_momentum:
-            targets += ["momentum"] if self.use_beta1 else ["betas"]
+            targets += ["betas"] if self.use_beta1 else ["momentum"]
         return targets
 
     def _init_scale_fn(self):
@@ -1644,10 +1647,10 @@ class OneCycleLR(Scheduler):
 
         # Initialize momentum variables
         self.cycle_momentum = cycle_momentum
+        self.use_beta1 = "betas" in optimizer.defaults
         if self.cycle_momentum:
             if 'momentum' not in optimizer.defaults and 'betas' not in optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
-            self.use_beta1 = 'betas' in optimizer.defaults
             max_momentums = _format_param('max_momentum', param_groups, max_momentum)
             base_momentums = _format_param('base_momentum', param_groups, base_momentum)
             if last_step == -1:
@@ -1665,7 +1668,7 @@ class OneCycleLR(Scheduler):
     def targets(self) -> Sequence[str]:
         targets = ["lr"]
         if self.cycle_momentum:
-            targets += ["momentum"] if self.use_beta1 else ["betas"]
+            targets += ["betas"] if self.use_beta1 else ["momentum"]
         return targets
 
     @staticmethod
