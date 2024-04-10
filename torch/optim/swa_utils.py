@@ -364,7 +364,7 @@ class SWALR(Scheduler):
             return swa_lr
         return (lr - alpha * swa_lr) / (1 - alpha)
 
-    def get_targets(self, *, step: int, **kwargs):
+    def update_targets(self, *, step: int, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -377,7 +377,7 @@ class SWALR(Scheduler):
         t = max(0, min(1, step / max(1, self.anneal_epochs)))
         alpha = self.anneal_func(t)
         target = self.targets[0]
-        return [
-            {target: group['swa_lr'] * alpha + lr * (1 - alpha)}
-            for group, lr in zip(self.param_groups, prev_lrs)
-        ]
+
+        for param_group in self.param_groups:
+            prev_lr = self._get_initial_lr(param_group[target], param_group["swa_lr"], prev_alpha)
+            param_group[target] = param_group["swa_lr"] * alpha + prev_lr * (1 - alpha)

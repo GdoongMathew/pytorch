@@ -207,8 +207,8 @@ class Scheduler(_SchedulerBase):
         """
         self.__dict__.update(state_dict)
 
-    def get_targets(self, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
-        # Compute learning rate using chainable form of the scheduler
+    def update_targets(self, **kwargs) -> None:
+        # Update the learning rate, or other hyper parameters of each parameter group
         raise NotImplementedError
 
     def step(self, epoch: Optional[int] = None, **kwargs):
@@ -242,20 +242,7 @@ class Scheduler(_SchedulerBase):
             return
 
         with _enable_get_lr_call(self):
-            targets = self.get_targets(step=self.last_step, **kwargs)
-
-            if targets is None:
-                return
-
-            if any(map(lambda x: not isinstance(x, dict), targets)):
-                raise TypeError("get_targets should return a sequence of dicts")
-
-        assert len(targets) == len(self.param_groups), (
-            f"expected {len(self.param_groups)} targets, but got {len(targets)}"
-        )
-
-        for param_group, target in zip(self.param_groups, targets):
-            param_group.update(target)
+            self.update_targets(step=self.last_step, **kwargs)
 
 
 # Including _LRScheduler for backwards compatibility
@@ -352,15 +339,14 @@ class LambdaLR(Scheduler):
             if fn is not None:
                 self.lr_lambdas[idx].__dict__.update(fn)
 
-    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        return [
-            {self.targets[0]: base_target[f"initial_{self.targets[0]}"] * lmbda(step)}
-            for lmbda, base_target in zip(self.lr_lambdas, self.base_targets)
-        ]
+        for idx, (param_group, lambda_fn, base_target) in enumerate(
+                zip(self.param_groups, self.lr_lambdas, self.base_targets)):
+            param_group[self.targets[0]] = base_target[f"initial_{self.targets[0]}"] * self.lr_lambdas[idx](step)
 
 
 class MultiplicativeLR(LambdaLR):
@@ -393,16 +379,16 @@ class MultiplicativeLR(LambdaLR):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def get_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
         if not step:
             return None
-        return [
-            {self.targets[0]: param["lr"] * lmbda(step)}
-            for lmbda, param in zip(self.lr_lambdas, self.param_groups)
-        ]
+
+        for idx, (param_group, lambda_fn) in enumerate(
+                zip(self.param_groups, self.lr_lambdas)):
+            param_group[self.targets[0]] *= lambda_fn(step)
 
 
 class StepLR(Scheduler):
@@ -453,16 +439,17 @@ class StepLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
+        if step == 0:
+            return
 
         target = self.targets[0]
-        return [
-            {target: base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)}
-            for base_target in self.base_targets
-        ]
+
+        for idx, (param_group, base_target) in enumerate(zip(self.param_groups, self.base_targets)):
+            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)
 
 
 class MultiStepLR(Scheduler):
@@ -512,19 +499,18 @@ class MultiStepLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        target = self.targets[0]
         if step not in self.milestones:
             return None
 
-        return [
-            {target: param_group[target] * self.gamma ** self.milestones[step]}
-            for param_group in self.param_groups
-        ]
+        target = self.targets[0]
+
+        for param_groups in self.param_groups:
+            param_groups[target] *= self.gamma ** self.milestones[step]
 
 
 class ConstantLR(Scheduler):
@@ -579,22 +565,16 @@ class ConstantLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
         target = self.targets[0]
-        if not step:
-            return [{target: param_group[target] * self.factor} for param_group in self.param_groups]
 
-        if step != self.total_iters:
-            return None
-
-        return [
-            {target: param_group[target] * (1.0 / self.factor)}
-            for param_group in self.param_groups
-        ]
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * (
+                    self.factor + (step >= self.total_iters) * (1 - self.factor))
 
 
 class LinearLR(Scheduler):
@@ -657,24 +637,24 @@ class LinearLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Sequence[Dict[str, Any]]:
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
         target = self.targets[0]
         if not step:
-            return [{target: param_group[target] * self.start_factor} for param_group in self.param_groups]
+            for param_group in self.param_groups:
+                param_group[target] *= self.start_factor
+            return
 
         if step > self.total_iters:
-            return [{target: param_group[target]} for param_group in self.param_groups]
+            return
 
-        return [
-            {target: param_group[target] * (1. + (self.end_factor - self.start_factor) /
-                                         (self.total_iters * self.start_factor + (step - 1) * (
-                                                 self.end_factor - self.start_factor)))}
-            for param_group in self.param_groups
-        ]
+        for param_group in self.param_groups:
+            param_group[target] *= (1. + (self.end_factor - self.start_factor) /
+                                    (self.total_iters * self.start_factor + (step - 1) * (
+                                            self.end_factor - self.start_factor)))
 
 
 @deprecated("Use `StepLR(step_size=1)` instead.")
@@ -707,16 +687,18 @@ class ExponentialLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
         if step == 0:
-            return None
+            return
 
         target = self.targets[0]
-        return [{target: param_group[target] * self.gamma} for param_group in self.param_groups]
+
+        for param_group in self.param_groups:
+            param_group[target] *= self.gamma
 
 
 class PolynomialLR(Scheduler):
@@ -763,7 +745,7 @@ class PolynomialLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -771,9 +753,12 @@ class PolynomialLR(Scheduler):
         if not step:
             return None
 
+        target = self.targets[0]
         decay_factor = ((1.0 - step / self.total_iters) / (
                 1.0 - (step - 1) / self.total_iters)) ** self.power
-        return [{self.targets[0]: group[self.targets[0]] * decay_factor} for group in self.param_groups]
+
+        for param_group in self.param_groups:
+            param_group[target] *= decay_factor
 
 
 class CosineAnnealingLR(Scheduler):
@@ -834,35 +819,16 @@ class CosineAnnealingLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
         target = self.targets[0]
 
-        if not step:
-            return
-        elif self._step_count == 1 and step > 0:
-            return [
-                {target: self.eta_min + (base_target[f"initial_{target}"] - self.eta_min) *
-                         (1 + math.cos(step * math.pi / self.total_iters)) / 2}
-                for base_target, group in
-                zip(self.base_targets, self.param_groups)
-            ]
-        elif (step - 1 - self.total_iters) % (2 * self.total_iters) == 0:
-            return [
-                {target: group['lr'] + (base_target[f"initial_{target}"] - self.eta_min) *
-                         (1 - math.cos(math.pi / self.total_iters)) / 2}
-                for base_target, group in
-                zip(self.base_targets, self.param_groups)
-            ]
-        return [
-            {target: (1 + math.cos(math.pi * step / self.total_iters)) /
-                     (1 + math.cos(math.pi * (step - 1) / self.total_iters)) *
-                     (group['lr'] - self.eta_min) + self.eta_min}
-            for group in self.param_groups
-        ]
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = self.eta_min + (base_target[f"initial_{target}"] - self.eta_min) * (
+                        1 + math.cos(math.pi * step / self.total_iters)) / 2
 
 
 class ReduceLROnPlateau(Scheduler):
@@ -989,13 +955,13 @@ class ReduceLROnPlateau(Scheduler):
         self.cooldown_counter = 0
         self.num_bad_iters = 0
 
-    def get_targets(
+    def update_targets(
             self,
             *,
             step: int,
             metrics: float,
             **kwargs
-    ) -> Optional[Sequence[Dict[str, Any]]]:
+    ):
 
         if not step:
             return
@@ -1012,21 +978,15 @@ class ReduceLROnPlateau(Scheduler):
             self.num_bad_iters = 0  # ignore any bad epochs in cooldown
 
         if self.num_bad_iters > self.patience:
-            lrs = self._reduce_lr()
+            self._reduce_lr()
             self.cooldown_counter = self.cooldown
             self.num_bad_iters = 0
-        else:
-            lrs = None
-
-        return lrs
 
     def _reduce_lr(self) -> Sequence[Dict[str, Any]]:
-        lrs = [{} for _ in range(len(self.param_groups))]
-        for i, (param_group, min_lr) in enumerate(zip(self.param_groups, self.min_lrs)):
+        for param_group, min_lr in zip(self.param_groups, self.min_lrs):
             old_lr = float(param_group['lr'])
             new_lr = max(old_lr * self.factor, min_lr)
-            lrs[i] = {"lr": new_lr if old_lr - new_lr > self.eps else old_lr}
-        return lrs
+            param_group["lr"] = new_lr if old_lr - new_lr > self.eps else old_lr
 
     @property
     def in_cooldown(self):
@@ -1272,7 +1232,7 @@ class CyclicLR(Scheduler):
         return gamma ** x
 
     # def get_lr(self):
-    def get_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         """Calculates the learning rate at batch index. This function treats
         `self.last_epoch` as the last batch index.
 
@@ -1291,7 +1251,6 @@ class CyclicLR(Scheduler):
         else:
             scale_factor = (x - 1) / (self.step_ratio - 1)
 
-        rets = [{} for _ in self.param_groups]
         for pg_i, param_group in enumerate(self.param_groups):
             base_lr, max_lr = param_group["base_lr"], param_group["max_lr"]
             base_height = (max_lr - base_lr) * scale_factor
@@ -1299,7 +1258,8 @@ class CyclicLR(Scheduler):
                 lr = base_lr + base_height * self.scale_fn(cycle)
             else:
                 lr = base_lr + base_height * self.scale_fn(step)
-            ret = {"lr": lr}
+
+            param_group["lr"] = lr
 
             if self.cycle_momentum:
                 base_momentum, max_momentum = param_group["base_momentum"], param_group["max_momentum"]
@@ -1309,12 +1269,9 @@ class CyclicLR(Scheduler):
                 else:
                     momentum = max_momentum - base_height * self.scale_fn(step)
                 if self.use_beta1:
-                    ret["betas"] = (momentum, *param_group['betas'][1:])
+                    param_group["betas"] = (momentum, *param_group["betas"][1:])
                 else:
-                    ret["momentum"] = momentum
-
-            rets[pg_i] = ret
-        return rets
+                    param_group["momentum"] = momentum
 
     def state_dict(self):
         state = super().state_dict()
@@ -1397,14 +1354,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def get_lr(self):
-        return [
-            {self.targets[0]: self.eta_min + (base_target[f"initial_{self.targets[0]}"] - self.eta_min) * (
-                    1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2}
-            for base_target in self.base_targets
-        ]
-
-    def get_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         """Step could be called after every batch update
 
         Example:
@@ -1445,7 +1395,10 @@ class CosineAnnealingWarmRestarts(Scheduler):
             self.T_i = self.T_0
             self.T_cur = step
 
-        return self.get_lr()
+        target = self.targets[0]
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = self.eta_min + (base_target[f"initial_{target}"] - self.eta_min) * (
+                    1 + math.cos(math.pi * self.T_cur / self.T_i)) / 2
 
 
 class OneCycleLR(Scheduler):
@@ -1682,7 +1635,7 @@ class OneCycleLR(Scheduler):
         "Linearly anneal from `start` to `end` as pct goes from 0.0 to 1.0."
         return (end - start) * pct + start
 
-    def get_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -1692,30 +1645,26 @@ class OneCycleLR(Scheduler):
                 f"Tried to step {step} times. The specified number of total steps is {self.total_iters}."
             )
 
-        targets = [{} for _ in range(len(self.param_groups))]
-
-        for pg_i, group in enumerate(self.param_groups):
+        for pg_i, param_group in enumerate(self.param_groups):
             start_step = 0
             for i, phase in enumerate(self._schedule_phases):
                 end_step = phase['end_step']
                 if step <= end_step or i == len(self._schedule_phases) - 1:
                     pct = (step - start_step) / (end_step - start_step)
-                    computed_lr = self.anneal_func(group[phase['start_lr']], group[phase['end_lr']], pct)
+                    computed_lr = self.anneal_func(param_group[phase['start_lr']], param_group[phase['end_lr']], pct)
                     if self.cycle_momentum:
-                        computed_momentum = self.anneal_func(group[phase['start_momentum']],
-                                                             group[phase['end_momentum']], pct)
+                        computed_momentum = self.anneal_func(param_group[phase['start_momentum']],
+                                                             param_group[phase['end_momentum']], pct)
                     break
                 start_step = phase['end_step']
 
             target = {"lr": computed_lr}
             if self.cycle_momentum:
                 if self.use_beta1:
-                    target["betas"] = (computed_momentum, *group['betas'][1:])
+                    target["betas"] = (computed_momentum, *param_group['betas'][1:])
                 else:
                     target["momentum"] = computed_momentum
-            targets[pg_i] = target
-
-        return targets
+            param_group.update(target)
 
 
 class ComposeScheduler(_SchedulerBase, abc.ABC):
@@ -1780,7 +1729,7 @@ class ComposeScheduler(_SchedulerBase, abc.ABC):
 
     @abc.abstractmethod
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
-        raise NotImplementedError(f"get_targets() is not implemented in {self.__class__.__name__}")
+        raise NotImplementedError(f"update_targets() is not implemented in {self.__class__.__name__}")
 
     @property
     def optimizer(self) -> Optimizer:
