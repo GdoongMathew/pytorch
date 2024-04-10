@@ -207,7 +207,7 @@ class Scheduler(_SchedulerBase):
         """
         self.__dict__.update(state_dict)
 
-    def update_targets(self, **kwargs) -> None:
+    def update_targets(self, **kwargs) -> NoReturn:
         # Update the learning rate, or other hyper parameters of each parameter group
         raise NotImplementedError
 
@@ -339,7 +339,7 @@ class LambdaLR(Scheduler):
             if fn is not None:
                 self.lr_lambdas[idx].__dict__.update(fn)
 
-    def update_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -379,7 +379,7 @@ class MultiplicativeLR(LambdaLR):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -439,17 +439,17 @@ class StepLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
-        if step == 0:
+        if step == 0 or step % self.step_size != 0:
             return
 
         target = self.targets[0]
 
-        for idx, (param_group, base_target) in enumerate(zip(self.param_groups, self.base_targets)):
-            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] *= self.gamma
 
 
 class MultiStepLR(Scheduler):
@@ -499,7 +499,7 @@ class MultiStepLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ['lr']
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -565,7 +565,7 @@ class ConstantLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -637,7 +637,7 @@ class LinearLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -687,7 +687,7 @@ class ExponentialLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
@@ -745,7 +745,7 @@ class PolynomialLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -819,7 +819,7 @@ class CosineAnnealingLR(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step, **kwargs):
+    def update_targets(self, *, step, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -961,7 +961,7 @@ class ReduceLROnPlateau(Scheduler):
             step: int,
             metrics: float,
             **kwargs
-    ):
+    ) -> NoReturn:
 
         if not step:
             return
@@ -1231,8 +1231,7 @@ class CyclicLR(Scheduler):
     def _exp_range_scale_fn(gamma, x):
         return gamma ** x
 
-    # def get_lr(self):
-    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> NoReturn:
         """Calculates the learning rate at batch index. This function treats
         `self.last_epoch` as the last batch index.
 
@@ -1354,7 +1353,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
     def targets(self) -> Sequence[str]:
         return ["lr"]
 
-    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> NoReturn:
         """Step could be called after every batch update
 
         Example:
@@ -1384,6 +1383,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
+
         if step >= self.T_0:
             if self.T_mult == 1:
                 self.T_cur = step % self.T_0
@@ -1615,7 +1615,7 @@ class OneCycleLR(Scheduler):
                     group['max_momentum'] = m_momentum
                     group['base_momentum'] = b_momentum
 
-        super().__init__(optimizer, total_iters=total_iters, last_step=last_step)
+        super().__init__(optimizer, param_groups=param_groups, total_iters=total_iters, last_step=last_step)
 
     @property
     def targets(self) -> Sequence[str]:
@@ -1635,7 +1635,7 @@ class OneCycleLR(Scheduler):
         "Linearly anneal from `start` to `end` as pct goes from 0.0 to 1.0."
         return (end - start) * pct + start
 
-    def update_targets(self, *, step: int, **kwargs) -> Optional[Sequence[Dict[str, Any]]]:
+    def update_targets(self, *, step: int, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -1818,7 +1818,7 @@ class SequentialLR(ComposeScheduler):
 
         # Perform the initial step for only the first scheduler
         self._current_sch = self.schedulers[0]
-        self._current_sch._initial_step()
+        self.step()
 
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
         idx = bisect_right(self.milestones, step)
@@ -1855,6 +1855,9 @@ class ChainedScheduler(ComposeScheduler):
         >>>     validate(...)
         >>>     scheduler.step()
     """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.step()
 
     def step_schedulers(self, *, step: int, **kwargs) -> NoReturn:
         for scheduler in self.schedulers:

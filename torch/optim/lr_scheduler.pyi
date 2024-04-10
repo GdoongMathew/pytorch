@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Union, NoReturn
 
 from .optimizer import Optimizer
 
@@ -23,7 +23,7 @@ class Scheduler(_SchedulerBase):
         last_step: int = ...,
         total_iters: Optional[int] = ...,
     ) -> None: ...
-    def get_targets(self, **kwargs) -> Optional[Sequence[Dict[str, Any]]]: ...
+    def update_targets(self, **kwargs) -> NoReturn: ...
     def step(self, epoch: int = ..., **kwargs) -> None: ...
 
 

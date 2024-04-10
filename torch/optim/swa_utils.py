@@ -1,3 +1,4 @@
+from typing import Sequence, NoReturn
 import itertools
 import math
 from copy import deepcopy
@@ -336,7 +337,7 @@ class SWALR(Scheduler):
         super().__init__(optimizer, last_step=last_step)
 
     @property
-    def targets(self):
+    def targets(self) -> Sequence[str]:
         return ["lr"]
 
     @staticmethod
@@ -364,7 +365,7 @@ class SWALR(Scheduler):
             return swa_lr
         return (lr - alpha * swa_lr) / (1 - alpha)
 
-    def update_targets(self, *, step: int, **kwargs):
+    def update_targets(self, *, step: int, **kwargs) -> NoReturn:
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
@@ -372,8 +373,6 @@ class SWALR(Scheduler):
             step = max(1, step)
         prev_t = max(0, min(1, (step - 1) / max(1, self.anneal_epochs)))
         prev_alpha = self.anneal_func(prev_t)
-        prev_lrs = [self._get_initial_lr(group['lr'], group['swa_lr'], prev_alpha)
-                    for group in self.param_groups]
         t = max(0, min(1, step / max(1, self.anneal_epochs)))
         alpha = self.anneal_func(t)
         target = self.targets[0]
