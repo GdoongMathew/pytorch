@@ -93,7 +93,6 @@ class TestLRScheduler(TestCase):
     def test_error_when_getlr_has_epoch(self):
         class MultiStepLR(Scheduler):
             def __init__(self, optimizer, gamma, milestones, last_step=-1):
-                self.init_lr = [group["lr"] for group in optimizer.param_groups]
                 self.gamma = gamma
                 self.milestones = milestones
                 super().__init__(optimizer, last_step=last_step)
@@ -108,8 +107,10 @@ class TestLRScheduler(TestCase):
                     + [i + 1 for i, m in enumerate(self.milestones) if step >= m]
                 )[-1]
 
-                for group, init_lr in zip(self.param_groups, self.init_lr):
-                    group["lr"] = init_lr * (self.gamma**gamma_power)
+                target = self.targets[0]
+
+                for group, base_target in zip(self.param_groups, self.base_targets):
+                    group["lr"] = base_target[f"initial_{target}"] * (self.gamma**gamma_power)
 
         optimizer = SGD([torch.rand(1)], lr=1)
 
