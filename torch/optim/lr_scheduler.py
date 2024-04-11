@@ -455,7 +455,6 @@ class StepLR(Scheduler):
             param_group[target] = base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)
 
 
-
 class MultiStepLR(Scheduler):
     """Decays the learning rate of each parameter group by gamma once the
     number of epoch reaches one of the milestones. Notice that such decay can
@@ -508,13 +507,10 @@ class MultiStepLR(Scheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        if step not in self.milestones:
-            return None
-
         target = self.targets[0]
 
-        for param_groups in self.param_groups:
-            param_groups[target] *= self.gamma ** self.milestones[step]
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** bisect_right(list(self.milestones.elements()), step)
 
 
 class ConstantLR(Scheduler):
@@ -647,18 +643,10 @@ class LinearLR(Scheduler):
                           "please use `get_last_lr()`.")
 
         target = self.targets[0]
-        if not step:
-            for param_group in self.param_groups:
-                param_group[target] *= self.start_factor
-            return
-
-        if step > self.total_iters:
-            return
-
-        for param_group in self.param_groups:
-            param_group[target] *= (1. + (self.end_factor - self.start_factor) /
-                                    (self.total_iters * self.start_factor + (step - 1) * (
-                                            self.end_factor - self.start_factor)))
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * (
+                    self.start_factor + (self.end_factor - self.start_factor) * min(self.total_iters,
+                                                                                    step) / self.total_iters)
 
 
 @deprecated("Use `StepLR(step_size=1)` instead.")
@@ -756,15 +744,10 @@ class PolynomialLR(Scheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.", UserWarning)
 
-        if not step:
-            return None
-
         target = self.targets[0]
-        decay_factor = ((1.0 - step / self.total_iters) / (
-                1.0 - (step - 1) / self.total_iters)) ** self.power
 
-        for param_group in self.param_groups:
-            param_group[target] *= decay_factor
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * (1.0 - min(self.total_iters, step) / self.total_iters) ** self.power
 
 
 class CosineAnnealingLR(Scheduler):
