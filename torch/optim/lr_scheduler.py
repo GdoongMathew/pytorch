@@ -443,13 +443,17 @@ class StepLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
-        if step == 0 or step % self.step_size != 0:
-            return
 
+        # The following implementation would impact how the resulting learning rate is computed
+        # when the scheduler is composed into a `SequentialLR` scheduler.
+        # If use the `initial_lr` from the `base_targets` instead of the `param_group[target]`
+        # the learning rate would be computed based on the initial learning rate set in the optimizer,
+        # and not the learning rate computed by the previous scheduler in the sequence.
         target = self.targets[0]
 
         for param_group, base_target in zip(self.param_groups, self.base_targets):
-            param_group[target] *= self.gamma
+            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** (step // self.step_size)
+
 
 
 class MultiStepLR(Scheduler):
@@ -692,13 +696,15 @@ class ExponentialLR(Scheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        if step == 0:
-            return
-
         target = self.targets[0]
 
-        for param_group in self.param_groups:
-            param_group[target] *= self.gamma
+        # The following implementation would impact how the resulting learning rate is computed
+        # when the scheduler is composed into a `SequentialLR` scheduler.
+        # If use the `initial_lr` from the `base_targets` instead of the `param_group[target]`
+        # the learning rate would be computed based on the initial learning rate set in the optimizer,
+        # and not the learning rate computed by the previous scheduler in the sequence.
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** step
 
 
 class PolynomialLR(Scheduler):
