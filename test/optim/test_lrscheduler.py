@@ -3,7 +3,7 @@ import types
 import warnings
 import math
 import pickle
-from functools import partial
+import copy
 
 import torch
 import torch.nn.functional as F
@@ -92,21 +92,24 @@ class TestLRScheduler(TestCase):
 
     def test_error_when_getlr_has_epoch(self):
         class MultiStepLR(Scheduler):
-            def __init__(self, optimizer, gamma, milestones, last_epoch=-1):
+            def __init__(self, optimizer, gamma, milestones, last_step=-1):
                 self.init_lr = [group["lr"] for group in optimizer.param_groups]
                 self.gamma = gamma
                 self.milestones = milestones
-                super().__init__(optimizer, last_epoch)
+                super().__init__(optimizer, last_step=last_step)
 
-            def get_lr(self, step):
-                global_step = self.last_epoch
+            @property
+            def targets(self):
+                return ["lr"]
+
+            def update_targets(self, *, step, **kwargs):
                 gamma_power = (
                     [0]
-                    + [i + 1 for i, m in enumerate(self.milestones) if global_step >= m]
+                    + [i + 1 for i, m in enumerate(self.milestones) if step >= m]
                 )[-1]
-                return [
-                    init_lr * (self.gamma**gamma_power) for init_lr in self.init_lr
-                ]
+
+                for group, init_lr in zip(self.param_groups, self.init_lr):
+                    group["lr"] = init_lr * (self.gamma**gamma_power)
 
         optimizer = SGD([torch.rand(1)], lr=1)
 
@@ -489,9 +492,10 @@ class TestLRScheduler(TestCase):
 
     def test_exp_lr(self):
         epochs = 10
-        single_targets = [0.05 * (0.9**x) for x in range(epochs)]
+        gamma = 0.9
+        single_targets = [0.05 * (gamma**x) for x in range(epochs)]
         targets = [single_targets, [x * epochs for x in single_targets]]
-        scheduler = ExponentialLR(self.opt, gamma=0.9)
+        scheduler = ExponentialLR(self.opt, gamma=gamma)
         self._test(scheduler, targets, epochs)
 
     def test_poly_lr(self):
@@ -517,46 +521,46 @@ class TestLRScheduler(TestCase):
         self._test(scheduler, targets, epochs)
 
     def test_closed_form_step_lr(self):
-        scheduler = StepLR(self.opt, gamma=0.1, step_size=3)
-        closed_form_scheduler = StepLR(self.opt, gamma=0.1, step_size=3)
+        scheduler = StepLR(copy.deepcopy(self.opt), gamma=0.1, step_size=3)
+        closed_form_scheduler = StepLR(copy.deepcopy(self.opt), gamma=0.1, step_size=3)
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_linearlr(self):
         scheduler = LinearLR(
-            self.opt, start_factor=1.0 / 3, end_factor=0.7, total_iters=4
+            copy.deepcopy(self.opt), start_factor=1.0 / 3, end_factor=0.7, total_iters=4
         )
         closed_form_scheduler = LinearLR(
-            self.opt, start_factor=1.0 / 3, end_factor=0.7, total_iters=4
+            copy.deepcopy(self.opt), start_factor=1.0 / 3, end_factor=0.7, total_iters=4
         )
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_constantlr(self):
-        scheduler = ConstantLR(self.opt, factor=1.0 / 3, total_iters=4)
-        closed_form_scheduler = ConstantLR(self.opt, factor=1.0 / 3, total_iters=4)
+        scheduler = ConstantLR(copy.deepcopy(self.opt), factor=1.0 / 3, total_iters=4)
+        closed_form_scheduler = ConstantLR(copy.deepcopy(self.opt), factor=1.0 / 3, total_iters=4)
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_multi_step_lr(self):
-        scheduler = MultiStepLR(self.opt, gamma=0.1, milestones=[2, 5, 9])
-        closed_form_scheduler = MultiStepLR(self.opt, gamma=0.1, milestones=[2, 5, 9])
+        scheduler = MultiStepLR(copy.deepcopy(self.opt), gamma=0.1, milestones=[2, 5, 9])
+        closed_form_scheduler = MultiStepLR(copy.deepcopy(self.opt), gamma=0.1, milestones=[2, 5, 9])
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_exp_lr(self):
-        scheduler = ExponentialLR(self.opt, gamma=0.9)
-        closed_form_scheduler = ExponentialLR(self.opt, gamma=0.9)
+        scheduler = ExponentialLR(copy.deepcopy(self.opt), gamma=0.9)
+        closed_form_scheduler = ExponentialLR(copy.deepcopy(self.opt), gamma=0.9)
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_poly_lr(self):
-        scheduler = PolynomialLR(self.opt, power=0.9)
-        closed_form_scheduler = PolynomialLR(self.opt, power=0.9)
+        scheduler = PolynomialLR(copy.deepcopy(self.opt), power=0.9)
+        closed_form_scheduler = PolynomialLR(copy.deepcopy(self.opt), power=0.9)
         self._test_against_closed_form(scheduler, closed_form_scheduler, 20)
 
     def test_closed_form_cos_anneal_lr(self):
         eta_min = 1e-10
         epochs = 20
         T_max = 5
-        scheduler = CosineAnnealingLR(self.opt, total_iters=T_max, eta_min=eta_min)
+        scheduler = CosineAnnealingLR(copy.deepcopy(self.opt), total_iters=T_max, eta_min=eta_min)
         closed_form_scheduler = CosineAnnealingLR(
-            self.opt, total_iters=T_max, eta_min=eta_min
+            copy.deepcopy(self.opt), total_iters=T_max, eta_min=eta_min
         )
         self._test_against_closed_form(scheduler, closed_form_scheduler, epochs)
 
@@ -759,10 +763,11 @@ class TestLRScheduler(TestCase):
     def test_get_last_lr_sequentiallr(self):
         epochs = 12
         milestones = [3, 6]
-        schedulers = [None] * 3
-        schedulers[0] = ConstantLR(self.opt, factor=0.1, total_iters=3)
-        schedulers[1] = ExponentialLR(self.opt, gamma=0.8)
-        schedulers[2] = StepLR(self.opt, gamma=0.1, step_size=2)
+        schedulers = [
+            ConstantLR(self.opt, factor=0.1, total_iters=3),
+            ExponentialLR(self.opt, gamma=0.8),
+            StepLR(self.opt, gamma=0.1, step_size=2),
+        ]
         scheduler = SequentialLR(schedulers=schedulers, milestones=milestones)
         constant_lr_target = [0.005] * 3
         exponential_lr_target = [0.05, 0.04, 0.032]
@@ -799,7 +804,6 @@ class TestLRScheduler(TestCase):
 
     def test_chained_lr3(self):
         epochs = 10
-        schedulers = [None] * 2
         targets = [
             [0.02, 0.03, 0.04, 0.05] + [0.005] * 4 + [0.0005] * 3 + [0.00005] * 3
         ]
@@ -1320,8 +1324,8 @@ class TestLRScheduler(TestCase):
         self._test_cycle_lr(scheduler, lr_targets, momentum_targets, len(lr_target_1))
 
     def test_cycle_lr_exp_range_mode(self):
-        base_lr_1, max_lr_1 = 1, 5
-        base_lr_2, max_lr_2 = 5, 12
+        base_lr_1, max_lr_1 = 1.0, 5.0
+        base_lr_2, max_lr_2 = 5.0, 12.0
 
         diff_lr_1 = max_lr_1 - base_lr_1
         diff_lr_2 = max_lr_2 - base_lr_2
@@ -1955,37 +1959,37 @@ class TestLRScheduler(TestCase):
 
     def test_step_lr_state_dict(self):
         self._check_scheduler_state_dict(
-            lambda: StepLR(self.opt, gamma=0.1, step_size=3),
-            lambda: StepLR(self.opt, gamma=0.01 / 2, step_size=1),
+            lambda: StepLR(copy.deepcopy(self.opt), gamma=0.1, step_size=3),
+            lambda: StepLR(copy.deepcopy(self.opt), gamma=0.01 / 2, step_size=1),
         )
 
     def test_multi_step_lr_state_dict(self):
         self._check_scheduler_state_dict(
-            lambda: MultiStepLR(self.opt, gamma=0.1, milestones=[2, 5, 9]),
-            lambda: MultiStepLR(self.opt, gamma=0.01, milestones=[1, 4, 6]),
+            lambda: MultiStepLR(copy.deepcopy(self.opt), gamma=0.1, milestones=[2, 5, 9]),
+            lambda: MultiStepLR(copy.deepcopy(self.opt), gamma=0.01, milestones=[1, 4, 6]),
         )
 
     def test_exp_step_lr_state_dict(self):
         self._check_scheduler_state_dict(
-            lambda: ExponentialLR(self.opt, gamma=0.1),
-            lambda: ExponentialLR(self.opt, gamma=0.01),
+            lambda: ExponentialLR(copy.deepcopy(self.opt), gamma=0.1),
+            lambda: ExponentialLR(copy.deepcopy(self.opt), gamma=0.01),
         )
 
     def test_cosine_lr_state_dict(self):
         epochs = 10
         eta_min = 1e-10
         self._check_scheduler_state_dict(
-            lambda: CosineAnnealingLR(self.opt, total_iters=epochs, eta_min=eta_min),
-            lambda: CosineAnnealingLR(self.opt, total_iters=epochs // 2, eta_min=eta_min / 2),
+            lambda: CosineAnnealingLR(copy.deepcopy(self.opt), total_iters=epochs, eta_min=eta_min),
+            lambda: CosineAnnealingLR(copy.deepcopy(self.opt), total_iters=epochs // 2, eta_min=eta_min / 2),
             epochs=epochs,
         )
 
     def test_reduce_lr_on_plateau_state_dict(self):
-        scheduler = ReduceLROnPlateau(self.opt, mode="min", factor=0.1, patience=2)
+        scheduler = ReduceLROnPlateau(copy.deepcopy(self.opt), mode="min", factor=0.1, patience=2)
         for score in [1.0, 2.0, 3.0, 4.0, 3.0, 4.0, 5.0, 3.0, 2.0, 1.0]:
-            scheduler.step(score)
+            scheduler.step(metrics=score)
         scheduler_copy = ReduceLROnPlateau(
-            self.opt, mode="max", factor=0.5, patience=10
+            copy.deepcopy(self.opt), mode="max", factor=0.5, patience=10
         )
         scheduler_copy.load_state_dict(scheduler.state_dict())
         for key in scheduler.__dict__.keys():
@@ -1993,22 +1997,22 @@ class TestLRScheduler(TestCase):
                 self.assertEqual(scheduler.__dict__[key], scheduler_copy.__dict__[key])
 
     def test_lambda_lr_state_dict_fn(self):
-        scheduler = LambdaLR(self.opt, lr_lambda=lambda x: x)
+        scheduler = LambdaLR(copy.deepcopy(self.opt), lr_lambda=lambda x: x)
         state = scheduler.state_dict()
         self.assertIsNone(state["lr_lambdas"][0])
 
-        scheduler_copy = LambdaLR(self.opt, lr_lambda=lambda x: x)
+        scheduler_copy = LambdaLR(copy.deepcopy(self.opt), lr_lambda=lambda x: x)
         scheduler_copy.load_state_dict(state)
         for key in scheduler.__dict__.keys():
             if key not in {"optimizer", "lr_lambdas"}:
                 self.assertEqual(scheduler.__dict__[key], scheduler_copy.__dict__[key])
 
     def test_lambda_lr_state_dict_obj(self):
-        scheduler = LambdaLR(self.opt, lr_lambda=self.LambdaLRTestObject(10))
+        scheduler = LambdaLR(copy.deepcopy(self.opt), lr_lambda=self.LambdaLRTestObject(10))
         state = scheduler.state_dict()
         self.assertIsNotNone(state["lr_lambdas"][0])
 
-        scheduler_copy = LambdaLR(self.opt, lr_lambda=self.LambdaLRTestObject(-1))
+        scheduler_copy = LambdaLR(copy.deepcopy(self.opt), lr_lambda=self.LambdaLRTestObject(-1))
         scheduler_copy.load_state_dict(state)
         for key in scheduler.__dict__.keys():
             if key not in {"optimizer"}:
@@ -2016,15 +2020,15 @@ class TestLRScheduler(TestCase):
 
     def test_CosineAnnealingWarmRestarts_lr_state_dict(self):
         self._check_scheduler_state_dict(
-            lambda: CosineAnnealingWarmRestarts(self.opt, T_0=10, T_mult=2),
-            lambda: CosineAnnealingWarmRestarts(self.opt, T_0=100),
+            lambda: CosineAnnealingWarmRestarts(copy.deepcopy(self.opt), T_0=10, T_mult=2),
+            lambda: CosineAnnealingWarmRestarts(copy.deepcopy(self.opt), T_0=100),
         )
 
     def test_swa_lr_state_dict(self):
         self._check_scheduler_state_dict(
-            lambda: SWALR(self.opt, anneal_epochs=3, swa_lr=0.5),
+            lambda: SWALR(copy.deepcopy(self.opt), anneal_epochs=3, swa_lr=0.5),
             lambda: SWALR(
-                self.opt, anneal_epochs=10, anneal_strategy="linear", swa_lr=5.0
+                copy.deepcopy(self.opt), anneal_epochs=10, anneal_strategy="linear", swa_lr=5.0
             ),
         )
 
@@ -2133,14 +2137,14 @@ class TestLRScheduler(TestCase):
         for epoch in range(epochs):
             closed_form_scheduler.optimizer.step()
             with warnings.catch_warnings(record=True) as w:
-                closed_form_scheduler.step(epoch)
+                closed_form_scheduler.step(epoch=epoch)
                 self._check_warning_is_epoch_deprecation_warning(w)
-            targets.append([group["lr"] for group in self.opt.param_groups])
+            targets.append([group["lr"] for group in closed_form_scheduler.param_groups])
         self.setUp()
         for epoch in range(epochs):
-            self.opt.step()
+            scheduler.optimizer.step()
             scheduler.step()
-            for i, param_group in enumerate(self.opt.param_groups):
+            for i, param_group in enumerate(scheduler.param_groups):
                 self.assertEqual(
                     targets[epoch][i],
                     param_group["lr"],
@@ -2159,10 +2163,7 @@ class TestLRScheduler(TestCase):
         for epoch in range(epochs):
             self.opt.step()
             for scheduler in schedulers:
-                if isinstance(scheduler, ReduceLROnPlateau):
-                    scheduler.step(metrics=metrics[epoch])
-                else:
-                    scheduler.step()
+                scheduler.step(metrics=metrics[epoch])
             if verbose:
                 print("epoch{}:\tlr={}".format(epoch, self.opt.param_groups[0]["lr"]))
             for param_group, target in zip(self.opt.param_groups, targets):
