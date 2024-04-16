@@ -1148,6 +1148,7 @@ class CyclicLR(Scheduler):
         self.mode = mode
         self.gamma = gamma
         self.cycle_momentum = cycle_momentum
+        self.use_beta1 = "beta1" in optimizer.defaults
 
         self._scale_fn_ref = None
         self._scale_fn_custom = scale_fn
@@ -1157,8 +1158,6 @@ class CyclicLR(Scheduler):
         if self.cycle_momentum:
             if 'momentum' not in optimizer.defaults and 'betas' not in optimizer.defaults:
                 raise ValueError('optimizer must support momentum or beta1 with `cycle_momentum` option enabled')
-
-            self.use_beta1 = 'betas' in optimizer.defaults
 
             base_momentums = _format_param('base_momentum', param_groups, base_momentum)
             max_momentums = _format_param('max_momentum', param_groups, max_momentum)
