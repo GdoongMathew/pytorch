@@ -344,9 +344,10 @@ class LambdaLR(Scheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        for idx, (param_group, lambda_fn, base_target) in enumerate(
-                zip(self.param_groups, self.lr_lambdas, self.base_targets)):
-            param_group[self.targets[0]] = base_target[f"initial_{self.targets[0]}"] * self.lr_lambdas[idx](step)
+        target = self.targets[0]
+
+        for param_group, lambda_fn, base_target in zip(self.param_groups, self.lr_lambdas, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * lambda_fn(step)
 
 
 class MultiplicativeLR(LambdaLR):
