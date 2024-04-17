@@ -508,12 +508,10 @@ class MultiStepLR(Scheduler):
             warnings.warn("To get the last learning rate computed by the scheduler, "
                           "please use `get_last_lr()`.")
 
-        if step not in self.milestones:
-            return
-
         target = self.targets[0]
-        for param_group in self.param_groups:
-            param_group[target] *= self.gamma ** self.milestones[step]
+
+        for param_group, base_target in zip(self.param_groups, self.base_targets):
+            param_group[target] = base_target[f"initial_{target}"] * self.gamma ** bisect_right(list(self.milestones.elements()), step)
 
 
 class ConstantLR(Scheduler):
