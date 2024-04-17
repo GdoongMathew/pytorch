@@ -1148,7 +1148,7 @@ class CyclicLR(Scheduler):
         self.mode = mode
         self.gamma = gamma
         self.cycle_momentum = cycle_momentum
-        self.use_beta1 = "beta1" in optimizer.defaults
+        self.use_beta1 = 'betas' in optimizer.defaults
 
         self._scale_fn_ref = None
         self._scale_fn_custom = scale_fn
