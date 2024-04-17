@@ -814,7 +814,7 @@ class TestLRScheduler(TestCase):
         ]
         scheduler = ChainedScheduler(schedulers)
         self._test([scheduler], targets, epochs)
-        self.assertEqual(scheduler.last_targets, schedulers[-1].last_targets)
+        self.assertEqual(scheduler.last_targets, schedulers[0].last_targets + schedulers[-1].last_targets)
 
     def test_chained_lr4(self):
         epochs = 9
