@@ -21,7 +21,6 @@ from torch.optim.lr_scheduler import (
     ExponentialLR,
     LambdaLR,
     LinearLR,
-    LRScheduler,
     MultiplicativeLR,
     MultiStepLR,
     OneCycleLR,
