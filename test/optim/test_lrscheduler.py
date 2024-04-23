@@ -1744,7 +1744,7 @@ class TestLRScheduler(TestCase):
             final_div_factor=2,
             base_momentum=1,
             max_momentum=22,
-            total_steps=10,
+            total_iters=10,
             anneal_strategy="cos",
         )
         delattr(scheduler, "_anneal_func_type")
