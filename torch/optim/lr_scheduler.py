@@ -1127,6 +1127,7 @@ class CyclicLR(Scheduler):
         base_momentum: Optional[Union[float, Sequence[float]]] = 0.8,
         max_momentum: Optional[Union[float, Sequence[float]]] = 0.9,
         last_step: int = -1,
+        **kwargs,
     ):
         param_groups = param_groups or optimizer.param_groups
 
@@ -1149,8 +1150,8 @@ class CyclicLR(Scheduler):
 
         step_size_down = step_size_down or step_size_up
 
-        total_iters = step_size_up + step_size_down
-        self.step_ratio = step_size_up / total_iters
+        self.total_size = step_size_up + step_size_down
+        self.step_ratio = step_size_up / self.total_size
 
         self.mode = mode
         self.gamma = gamma
@@ -1189,8 +1190,8 @@ class CyclicLR(Scheduler):
         super().__init__(
             optimizer=optimizer,
             param_groups=param_groups,
-            total_iters=total_iters,
             last_step=last_step,
+            **kwargs,
         )
 
     @property
@@ -1247,8 +1248,8 @@ class CyclicLR(Scheduler):
                 UserWarning,
             )
 
-        cycle = math.floor(1 + step / self.total_iters)
-        x = 1.0 + step / self.total_iters - cycle
+        cycle = math.floor(1 + step / self.total_size)
+        x = 1.0 + step / self.total_size - cycle
         if x <= self.step_ratio:
             scale_factor = x / self.step_ratio
         else:
