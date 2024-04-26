@@ -112,7 +112,7 @@ class TestLRScheduler(TestCase):
                 target = self.targets[0]
 
                 for group, base_target in zip(self.param_groups, self.base_targets):
-                    group["lr"] = base_target[f"initial_{target}"] * (self.gamma**gamma_power)
+                    group[target] = base_target[f"initial_{target}"] * (self.gamma**gamma_power)
 
         optimizer = SGD([torch.rand(1)], lr=1)
 
