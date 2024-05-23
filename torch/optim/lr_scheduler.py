@@ -173,10 +173,10 @@ class Scheduler(_SchedulerBase):
     @property
     def targets(self) -> Sequence[str]:
         """The targets that the scheduler can update."""
-        raise NotImplementedError("targets() must be implemented in derived classes")
+        raise NotImplementedError("targets must be implemented in derived classes")
 
     @property
-    def last_targets(self):
+    def last_targets(self) -> Sequence[Dict[str, Any]]:
         """The targets at the last step for each parameter group."""
         return [
             {key: param_group[key] for key in self.targets}
@@ -364,7 +364,7 @@ class LambdaLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`."
             )
 
         target = self.targets[0]
@@ -405,7 +405,7 @@ class MultiplicativeLR(LambdaLR):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`."
             )
         if not step:
             return None
@@ -462,7 +462,8 @@ class StepLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`.",
+                UserWarning,
             )
 
         # The following implementation would impact how the resulting learning rate is computed
@@ -523,7 +524,8 @@ class MultiStepLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`.",
+                UserWarning,
             )
 
         target = self.targets[0]
@@ -586,7 +588,8 @@ class ConstantLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`.",
+                UserWarning,
             )
 
         target = self.targets[0]
@@ -659,7 +662,8 @@ class LinearLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`.",
+                UserWarning,
             )
 
         target = self.targets[0]
@@ -701,7 +705,8 @@ class ExponentialLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`."
+                "please use property `last_targets`.",
+                UserWarning,
             )
 
         target = self.targets[0]
@@ -757,7 +762,7 @@ class PolynomialLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`.",
+                "please use property `last_targets`.",
                 UserWarning,
             )
 
@@ -826,7 +831,7 @@ class CosineAnnealingLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`.",
+                "please use property `last_targets`.",
                 UserWarning,
             )
 
@@ -1244,7 +1249,7 @@ class CyclicLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`.",
+                "please use property `last_targets`.",
                 UserWarning,
             )
 
@@ -1387,7 +1392,7 @@ class CosineAnnealingWarmRestarts(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`.",
+                "please use property `last_targets`.",
                 UserWarning,
             )
 
@@ -1670,7 +1675,7 @@ class OneCycleLR(Scheduler):
         if not self._get_lr_called_within_step:
             warnings.warn(
                 "To get the last learning rate computed by the scheduler, "
-                "please use `get_last_lr()`.",
+                "please use property `last_targets`.",
                 UserWarning,
             )
 
