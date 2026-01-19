@@ -2301,6 +2301,11 @@
   device_check: NoCheck   # TensorIterator
   variants: method
 
+- func: divmod.Tensor(Tensor self, Tensor other) -> (Tensor, Tensor)
+  variants: function, method
+  dispatch:
+    CompositeExplicitAutograd: divmod
+
 - func: dot(Tensor self, Tensor tensor) -> Tensor
   variants: function, method
   dispatch:
