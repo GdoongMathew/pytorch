@@ -1834,7 +1834,7 @@
 
 - func: cosine_embedding_loss(Tensor input1, Tensor input2, Tensor target, float margin=0.0, int reduction=Mean) -> Tensor
 
-- func: count_nonzero.dim_IntList(Tensor self, int[] dim) -> Tensor
+- func: count_nonzero.dim_IntList(Tensor self, int[] dim, *, ScalarType? dtype=None) -> Tensor
   variants: function, method
   dispatch:
     CPU: count_nonzero_cpu
@@ -1844,7 +1844,7 @@
   autogen: count_nonzero.dim_IntList_out
   tags: reduction
 
-- func: count_nonzero(Tensor self, int? dim=None) -> Tensor
+- func: count_nonzero(Tensor self, int? dim=None, *, ScalarType? dtype=None) -> Tensor
   variants: function, method
   dispatch:
     CompositeExplicitAutograd: count_nonzero

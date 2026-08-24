@@ -2826,21 +2826,23 @@ static int64_t count_nonzero_impl(TensorIteratorBase& iter, Range range) {
   return num_nonzero;
 }
 
-Tensor count_nonzero_cuda(const Tensor& self, IntArrayRef dims) {
+Tensor count_nonzero_cuda(const Tensor& self, IntArrayRef dims, c10::ScalarType opt_dtype) {
+  auto out_type = c10::make_optional(opt_type).value_or(ScalarType.kLong)
   auto reduce = self;
   if (reduce.scalar_type() != kBool) {
     reduce = reduce != 0;
   }
-  return reduce.sum(dims);
+  return reduce.sum(dims, /*dtypes=*/out_type);
 }
 
-Tensor count_nonzero_cpu(const Tensor& self, IntArrayRef dims) {
+Tensor count_nonzero_cpu(const Tensor& self, IntArrayRef dims, c10::ScalarType opt_dtype) {
+  auto out_type = c10::make_optional(opt_type).value_or(ScalarType.kLong)
   if (!dims.empty()) {
     auto reduce = self;
     if (reduce.scalar_type() != kBool) {
       reduce = reduce != 0;
     }
-    return reduce.sum(dims);
+    return reduce.sum(dims, /*dtypes=*/out_type);
   }
 
   // Optimized all-reduce
@@ -2872,16 +2874,16 @@ Tensor count_nonzero_cpu(const Tensor& self, IntArrayRef dims) {
   for (const auto i : c10::irange(1, num_threads)) {
     thread_count_nonzero[0] += thread_count_nonzero[i];
   }
-  auto out = at::empty({}, self.options().dtype(kLong));
+  auto out = at::empty({}, out_type);
   *out.mutable_data_ptr<int64_t>() = thread_count_nonzero[0];
   return out;
 }
 
-Tensor count_nonzero(const Tensor& self, std::optional<int64_t> dim) {
+Tensor count_nonzero(const Tensor& self, std::optional<int64_t> dim, c10::ScalarType opt_dtype) {
   if (dim) {
-    return at::count_nonzero(self, IntArrayRef{*dim});
+    return at::count_nonzero(self, IntArrayRef{*dim}, opt_dtype);
   }
-  return at::count_nonzero(self, IntArrayRef{});
+  return at::count_nonzero(self, IntArrayRef{}, opt_dtype);
 }
 
 Tensor& nonzero_out_cpu(const Tensor& self, Tensor& result) {
