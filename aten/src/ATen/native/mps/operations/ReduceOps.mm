@@ -1813,11 +1813,13 @@ Tensor prod_mps(const Tensor& self, std::optional<ScalarType> opt_dtype) {
   return output_t;
 }
 
-Tensor count_nonzero_mps(const Tensor& self, IntArrayRef dims, c10::ScalarType opt_dtype) {
-  auto out_type = c10::make_optional(opt_type).value_or(ScalarType::Long);
+Tensor count_nonzero_mps(const Tensor& self, IntArrayRef dims, std::optional<c10::ScalarType> opt_dtype) {
+  auto out_type = opt_dtype.value_or(ScalarType::Long);
+  TORCH_CHECK(
+      out_type == ScalarType::Long, "count_nonzero_mps: only Long output type is supported, but got ", out_type);
+
   Tensor result = create_reduction_result(self, dims, /*keepdim=*/false, out_type);
-  auto iter =
-      make_reduction("count_nonzero_mps", result, self, dims, /*keepdim=*/false, self.scalar_type(), out_type);
+  auto iter = make_reduction("count_nonzero_mps", result, self, dims, /*keepdim=*/false, self.scalar_type(), out_type);
   count_nonzero_kernel_mps(iter);
   return result;
 }
