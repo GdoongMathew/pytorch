@@ -2881,10 +2881,18 @@ Tensor count_nonzero_cpu(
     thread_count_nonzero[0] += thread_count_nonzero[i];
   }
   auto out = at::empty({}, out_type);
-  AT_DISPATCH_ALL_TYPES(out_type, "nonzero_count_cpu", [&] {
-    *out.mutable_data_ptr<scalar_t>() =
-        static_cast<scalar_t>(thread_count_nonzero[0]);
-  });
+  AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND5(
+      kComplexHalf,
+      kBComplex32,
+      kHalf,
+      kBFloat16,
+      kBool,
+      out_type,
+      "nonzero_count_cpu",
+      [&] {
+        *out.mutable_data_ptr<scalar_t>() =
+            static_cast<scalar_t>(thread_count_nonzero[0]);
+      });
 
   return out;
 }

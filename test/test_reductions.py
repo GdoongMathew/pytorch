@@ -1708,6 +1708,16 @@ class TestReductions(TestCase):
         self._test_reduction_function_with_numpy(torch.count_nonzero, np.count_nonzero, device, dtype)
         self._test_reduction_function_with_numpy(torch.count_nonzero, np.count_nonzero, device, dtype, True)
 
+    @dtypes(*all_types_and(torch.half, torch.bfloat16))
+    @skipIfMPS  # MPS only supports Long output
+    def test_count_nonzero_dtype(self, device, dtype):
+        x = torch.tensor([1, 2, 0, 3], device=device)
+        self.assertEqual(torch.count_nonzero(x, dtype=dtype).dtype, dtype)
+        self.assertEqual(
+            torch.count_nonzero(x, dim=0, dtype=dtype).dtype,
+            dtype,
+        )
+
     # TODO: Investigate why the output is not close to numpy.
     def _get_relaxed_tolerances_for(self, dtype):
         if dtype == torch.float16:
