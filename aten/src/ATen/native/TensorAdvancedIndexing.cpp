@@ -2826,10 +2826,22 @@ static int64_t count_nonzero_impl(TensorIteratorBase& iter, Range range) {
   return num_nonzero;
 }
 
+static void check_count_nonzero_dtype(std::optional<ScalarType> opt_dtype) {
+  if (opt_dtype.has_value()) {
+    auto out_dtype = opt_dtype.value();
+    TORCH_CHECK(
+        c10::isIntegralType(out_dtype, /*includeBool*/false) || c10::isFloatingType(out_dtype),
+        "count_nonzero: Expected out tensor to have integral or floating type "
+        "but got scalar type",
+        out_dtype);
+  }
+}
+
 Tensor count_nonzero_cuda(
     const Tensor& self,
     IntArrayRef dims,
     std::optional<ScalarType> opt_dtype) {
+  check_count_nonzero_dtype(opt_dtype);
   auto out_type = opt_dtype.value_or(ScalarType::Long);
   auto reduce = self;
   if (reduce.scalar_type() != kBool) {
@@ -2842,6 +2854,7 @@ Tensor count_nonzero_cpu(
     const Tensor& self,
     IntArrayRef dims,
     std::optional<ScalarType> opt_dtype) {
+  check_count_nonzero_dtype(opt_dtype);
   auto out_type = opt_dtype.value_or(ScalarType::Long);
   if (!dims.empty()) {
     auto reduce = self;
@@ -2857,12 +2870,7 @@ Tensor count_nonzero_cpu(
   const auto num_threads = at::get_num_threads();
   DimVector thread_count_nonzero(num_threads);
 
-  AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND5(
-      kComplexHalf,
-      kBComplex32,
-      kHalf,
-      kBFloat16,
-      kBool,
+  AT_DISPATCH_ALL_TYPES(
       self.scalar_type(),
       "nonzero_count_cpu",
       [&] {
@@ -2881,12 +2889,7 @@ Tensor count_nonzero_cpu(
     thread_count_nonzero[0] += thread_count_nonzero[i];
   }
   auto out = at::empty({}, out_type);
-  AT_DISPATCH_ALL_TYPES_AND_COMPLEX_AND5(
-      kComplexHalf,
-      kBComplex32,
-      kHalf,
-      kBFloat16,
-      kBool,
+  AT_DISPATCH_ALL_TYPES(
       out_type,
       "nonzero_count_cpu",
       [&] {
@@ -2901,6 +2904,7 @@ Tensor count_nonzero(
     const Tensor& self,
     std::optional<int64_t> dim,
     std::optional<ScalarType> opt_dtype) {
+  check_count_nonzero_dtype(opt_dtype);
   if (dim) {
     return at::count_nonzero(self, IntArrayRef{*dim}, opt_dtype);
   }

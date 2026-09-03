@@ -6822,8 +6822,8 @@ def deg2rad(self: TensorLikeType):
 
 @register_decomposition(aten.count_nonzero)
 @out_wrapper()
-def count_nonzero(self, dim: DimsType | None = None):
-    return (self != 0).sum(dim)
+def count_nonzero(self, dim: DimsType | None = None, *, dtype: torch.dtype | None = None):
+    return (self != 0).sum(dim, dtype=dtype)
 
 
 def _dot_check(self, other):
