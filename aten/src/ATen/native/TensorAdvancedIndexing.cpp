@@ -2830,9 +2830,10 @@ static void check_count_nonzero_dtype(std::optional<ScalarType> opt_dtype) {
   if (opt_dtype.has_value()) {
     auto out_dtype = opt_dtype.value();
     TORCH_CHECK(
-        c10::isIntegralType(out_dtype, /*includeBool*/false) || c10::isFloatingType(out_dtype),
+        c10::isIntegralType(out_dtype, /*includeBool*/ false) ||
+            c10::isFloatingType(out_dtype),
         "count_nonzero: Expected out tensor to have integral or floating type "
-        "but got scalar type",
+        "but got scalar type ",
         out_dtype);
   }
 }
@@ -2870,32 +2871,23 @@ Tensor count_nonzero_cpu(
   const auto num_threads = at::get_num_threads();
   DimVector thread_count_nonzero(num_threads);
 
-  AT_DISPATCH_ALL_TYPES(
-      self.scalar_type(),
-      "nonzero_count_cpu",
-      [&] {
-        at::parallel_for(
-            0,
-            iter.numel(),
-            internal::GRAIN_SIZE,
-            [&](int64_t begin, int64_t end) {
-              const auto tid = at::get_thread_num();
-              thread_count_nonzero[tid] =
-                  count_nonzero_impl<scalar_t>(iter, {begin, end});
-            });
-      });
+  AT_DISPATCH_ALL_TYPES(self.scalar_type(), "nonzero_count_cpu", [&] {
+    at::parallel_for(
+        0, iter.numel(), internal::GRAIN_SIZE, [&](int64_t begin, int64_t end) {
+          const auto tid = at::get_thread_num();
+          thread_count_nonzero[tid] =
+              count_nonzero_impl<scalar_t>(iter, {begin, end});
+        });
+  });
 
   for (const auto i : c10::irange(1, num_threads)) {
     thread_count_nonzero[0] += thread_count_nonzero[i];
   }
   auto out = at::empty({}, out_type);
-  AT_DISPATCH_ALL_TYPES(
-      out_type,
-      "nonzero_count_cpu",
-      [&] {
-        *out.mutable_data_ptr<scalar_t>() =
-            static_cast<scalar_t>(thread_count_nonzero[0]);
-      });
+  AT_DISPATCH_ALL_TYPES(out_type, "nonzero_count_cpu", [&] {
+    *out.mutable_data_ptr<scalar_t>() =
+        static_cast<scalar_t>(thread_count_nonzero[0]);
+  });
 
   return out;
 }
